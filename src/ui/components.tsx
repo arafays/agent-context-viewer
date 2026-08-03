@@ -5,6 +5,11 @@ import React, { useState } from "react";
 import { Box, Text, useInput, useStdout, type Key } from "ink";
 
 export function Header({ title, subtitle }: { title: string; subtitle?: string }) {
+  const { columns } = useTerminalSize();
+  // single-line header: truncate the subtitle so long cwd/date labels never wrap
+  let sub = subtitle ?? "";
+  const avail = Math.max(0, columns - 4 - title.length);
+  if (sub.length > avail) sub = sub.slice(0, Math.max(0, avail - 1)) + "…";
   return (
     <Box flexDirection="column" marginBottom={0}>
       <Box>
@@ -12,9 +17,9 @@ export function Header({ title, subtitle }: { title: string; subtitle?: string }
           {"◆ "}
         </Text>
         <Text bold>{title}</Text>
-        {subtitle ? <Text dimColor>  {subtitle}</Text> : null}
+        {sub ? <Text dimColor wrap="truncate-end">  {sub}</Text> : null}
       </Box>
-      <Text dimColor>{"─".repeat(process.stdout.columns ?? 80)}</Text>
+      <Text dimColor>{"─".repeat(columns)}</Text>
     </Box>
   );
 }
