@@ -12,11 +12,7 @@ export function SystemPromptView({ session, onBack }: { session: AgentSession; o
 
   const lines = useMemo(() => {
     const l: string[] = [];
-    l.push(
-      info.reconstructed
-        ? `SYSTEM PROMPT (reconstructed from pi@0.83.0 — AGENTS.md as of today)`
-        : `SYSTEM PROMPT (exact — stored inline in the session file)`,
-    );
+    l.push(`SYSTEM PROMPT (${info.reconstructed ? "reconstructed — AGENTS.md/CLAUDE.md as of today" : "exact — stored inline in the session"})`);
     l.push(`tools: ${info.tools.join(", ")}`);
     l.push(`context files: ${info.contextFiles.map((f) => f.path).join(" | ") || "(none)"}`);
     l.push(`skills: ${info.skills.map((s) => s.name).join(", ") || "(none)"}`);
