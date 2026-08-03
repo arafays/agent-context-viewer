@@ -30,7 +30,7 @@ export function ContextView({
       t.events
         .filter((e) => e.kind === "compaction")
         .map((e) => ({
-          entryIndex: t.entryEnd,
+          entryIndex: (e as { entryIndex?: number }).entryIndex ?? t.entryEnd,
           tokensBefore: (e as { tokensBefore?: number }).tokensBefore ?? 0,
           summary: String(e.summary ?? ""),
           readFiles: [] as string[],

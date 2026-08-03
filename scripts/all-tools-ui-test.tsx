@@ -62,6 +62,17 @@ const steps: Array<[number, () => void]> = [
   [t + 9500, () => stdin.write("q")], // back
   [t + 9600, () => stdin.write("f")], // files
   [t + 10900, () => stage("claude-files")],
+  [t + 11000, () => stdin.write("q")], // back
+  [t + 11100, () => stdin.write("q")], // back
+  [t + 11200, () => stdin.write("q")], // back home
+  [t + 12300, () => stdin.write("G")], // → opencode
+  [t + 12400, () => stage("oc-tool")],
+  [t + 12500, () => stdin.write("\r")], // open opencode project
+  [t + 13700, () => stage("oc-list")],
+  [t + 13800, () => stdin.write("\r")], // open opencode session
+  [t + 15100, () => stage("oc-detail")],
+  [t + 15200, () => stdin.write("c")], // context view
+  [t + 16500, () => stage("oc-context")],
 ];
 for (const [when, fn] of steps) setTimeout(fn, when);
 
@@ -69,4 +80,4 @@ setTimeout(() => {
   console.error(`DONE total=${output.length}`);
   unmount();
   process.exit(0);
-}, t + 11900);
+}, t + 17500);

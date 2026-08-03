@@ -7,6 +7,7 @@ import type { AgentSession, AgentTool, SessionMeta, ToolInfo } from "./types.ts"
 import { discoverSessions as discoverPi, loadSession as loadPi } from "./pi/index.ts";
 import { discoverSessions as discoverCodex, loadSession as loadCodex } from "./codex/index.ts";
 import { discoverSessions as discoverClaude, loadSession as loadClaude } from "./claude/index.ts";
+import { discoverSessions as discoverOpencode, loadSession as loadOpencode } from "./opencode/index.ts";
 
 export const TOOLS: ToolInfo[] = [
   {
@@ -33,9 +34,9 @@ export const TOOLS: ToolInfo[] = [
   {
     id: "opencode",
     name: "opencode",
-    description: "~/.local/share/opencode/opencode.db (adapter planned)",
-    available: false,
-    storage: ["~/.local/share/opencode/"],
+    description: "~/.local/share/opencode/opencode.db — exact per-request tokens; system prompt reconstructed",
+    available: true,
+    storage: ["~/.local/share/opencode/opencode.db"],
   },
   {
     id: "cmd",
@@ -73,6 +74,8 @@ export function discoverSessions(tool: AgentTool): SessionMeta[] {
       return discoverCodex();
     case "claude":
       return discoverClaude();
+    case "opencode":
+      return discoverOpencode();
     default:
       return [];
   }
@@ -87,6 +90,8 @@ export function loadSession(meta: SessionMeta): AgentSession {
       return loadCodex(meta.path);
     case "claude":
       return loadClaude(meta.path);
+    case "opencode":
+      return loadOpencode(meta);
     default:
       throw new Error(`adapter not implemented: ${meta.tool}`);
   }

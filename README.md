@@ -5,11 +5,14 @@ reveals the *before* and *after* context, what was added, what was pruned by
 compaction, which `AGENTS.md`/`CLAUDE.md` files were injected, and the full
 reconstructed system prompt.
 
-Built with **Bun + React + Ink**. Ships three adapters:
+Built with **Bun + React + Ink**. Ships **four** adapters:
 - **Pi** — context reconstructed from vendored Pi internals (compaction-aware)
 - **Codex** — system prompt + AGENTS.md stored inline (exact, no reconstruction)
-- **Claude Code** — exact per-request usage/tokens; system prompt not persisted
-  by Claude Code, so that view is unavailable and context files are reconstructed
+- **Claude Code** — exact per-request usage/tokens; system prompt not persisted,
+  context files reconstructed; commands shown as ⌘ lines
+- **opencode** — exact per-request usage from SQLite (952 sessions); compaction
+  tracking with history cutoff (like Pi's firstKeptEntry); system prompt
+  reconstructed from global + project AGENTS.md
 
 The architecture is adapter-based; other agents (opencode, Cursor, …) plug in
 with a single module.
@@ -67,7 +70,7 @@ before/after story is byte-exact.
 
 | Screen | Key | Shows |
 | --- | --- | --- |
-| Home | — | agent tools (Pi, Codex, Claude Code, …) + projects with session counts and token totals |
+| Home | — | agent tools (Pi, Codex, Claude Code, opencode, …) + projects with session counts and token totals |
 | Session list | `Enter` | searchable sessions: model, started, msgs, input/cache tokens, ⚒ compaction count |
 | Transcript | `Enter` | full session: user prompts, thinking, tool calls + results, model changes, custom events, per-request token usage |
 | Context view | `c` | token curve + before/after diff + context snapshot per request |
@@ -140,6 +143,10 @@ src/
     claude/index.ts ~/.claude/projects/*.jsonl: per-request usage (input+cache_read+
                     cache_creation), block-grouped assistant calls, command wrappers,
                     ai-title names; system prompt not persisted → empty + note
+    opencode/index.ts SQLite (~/.local/share/opencode/opencode.db): exact per-request
+                    tokens from message.data; tool call/result/tool-type parts grouped
+                    per request; compaction-aware cutoff for truthfully showing
+                    +N/−M diff (history replaced by summary bulk)
   engine/
     turns.ts        turn summarization, token totals
     context-diff.ts before/after diff, compaction markers, token curve (uses each
@@ -155,6 +162,7 @@ scripts/
   smoke.ts                  adapter sanity check against real Pi sessions
   smoke-codex.ts            codex adapter sanity check
   smoke-claude.ts           claude adapter sanity check
+  smoke-opencode.ts         opencode adapter sanity check (952 sessions)
   all-tools-ui-test.tsx     drives the full UI across every available adapter
   render-test.tsx           headless snapshot of every screen
   render-loop-test.tsx      drives the full UI with fake stdin/stdout
@@ -168,6 +176,8 @@ registering it in `registry.ts` — the renderer is shared.
 - [x] Pi adapter with per-prompt before/after context
 - [x] Codex adapter — exact context (system prompt inline), no reconstruction
 - [x] Claude Code adapter — exact per-request usage; system prompt not persisted
+- [x] opencode adapter — SQLite with 952 sessions; exact per-request tokens,
+  compaction tracking with history cutoff (truthful +N/−M diff)
 - [ ] opencode (`~/.local/share/opencode/` SQLite)
 - [ ] command-code (`~/.commandcode/projects/`)
 - [ ] Cursor / VS Code Copilot (SQLite stores)
