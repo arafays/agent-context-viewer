@@ -40,9 +40,10 @@ function extractFromFile(filePath: string): ToolSnippet | null {
   // matches promptGuidelines: ["a", "b", ...] possibly multi-line
   const gMatch = src.match(/promptGuidelines:\s*\[([\s\S]*?)\]/);
   if (gMatch) {
+    const group = gMatch[1] ?? "";
     const re = /"((?:[^"\\]|\\.)*)"/g;
     let m: RegExpExecArray | null;
-    while ((m = re.exec(gMatch[1]))) {
+    while ((m = re.exec(group))) {
       const g = m[1];
       if (g) guidelines.push(g.replace(/\\"/g, '"'));
     }
