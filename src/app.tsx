@@ -1,7 +1,7 @@
 /**
  * Top-level app: session discovery + screen routing (state machine).
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import type { AgentTool, SessionMeta } from "./adapters/types.ts";
 import { availableTools, discoverSessions, loadSession } from "./adapters/registry.ts";
@@ -24,6 +24,7 @@ type Screen =
 
 export function App() {
   const [sessionsByTool, setSessionsByTool] = useState<Record<AgentTool, SessionMeta[]> | null>(null);
+  const lastToolRef = useRef<AgentTool>("pi");
   const [screen, setScreen] = useState<Screen>({ name: "home" });
   const [cache, setCache] = useState<Map<string, AgentSession>>(new Map());
   const [error, setError] = useState<string | null>(null);
@@ -48,6 +49,7 @@ export function App() {
   }, []);
 
   const openSession = (meta: SessionMeta) => {
+    lastToolRef.current = meta.tool;
     const cached = cache.get(meta.path);
     if (cached) {
       setScreen({ name: "detail", session: meta, pi: cached });
@@ -96,8 +98,15 @@ export function App() {
         return (
           <Home
             sessionsByTool={sessionsByTool}
-            onOpenProject={(tool, project) => setScreen({ name: "list", tool, project })}
-            onOpenAll={(tool) => setScreen({ name: "list", tool, project: null })}
+            initialTool={lastToolRef.current}
+            onOpenProject={(tool, project) => {
+              lastToolRef.current = tool;
+              setScreen({ name: "list", tool, project });
+            }}
+            onOpenAll={(tool) => {
+              lastToolRef.current = tool;
+              setScreen({ name: "list", tool, project: null });
+            }}
             onQuit={() => process.exit(0)}
           />
         );

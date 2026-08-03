@@ -113,7 +113,10 @@ For each assistant turn N in a Pi session:
   (system prompt inline via `session_meta.base_instructions`, AGENTS.md/skills/permissions as
   developer/user messages, per-request usage from `token_count`, model from `turn_context`).
   Screens consume the shared `AgentSession` (`contextInfo` + `contextPoints` precomputed at load).
-  - [ ] claude (`~/.claude/projects/*.jsonl`) — next
+  - [x] claude (`~/.claude/projects/*.jsonl`) — exact per-request usage; system
+    prompt not persisted by Claude Code (turn_duration only) → honest note +
+    reconstructed context files; assistant entries grouped by identical usage
+    (Claude emits one entry per content block); commands shown as ⌘ lines
   - [ ] opencode (`~/.local/share/opencode/` SQLite)
   - [ ] cmd (`~/.commandcode/projects/`)
   - [ ] cursor / vscode (SQLite stores)

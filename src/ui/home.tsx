@@ -42,14 +42,18 @@ export function Home({
   onOpenProject,
   onOpenAll,
   onQuit,
+  initialTool = "pi",
 }: {
   sessionsByTool: Record<AgentTool, SessionMeta[]>;
   onOpenProject: (tool: AgentTool, project: string) => void;
   onOpenAll: (tool: AgentTool) => void;
   onQuit: () => void;
+  /** tool selected when this screen last opened (preserved across navigation) */
+  initialTool?: AgentTool;
 }) {
   const tools = TOOLS;
-  const toolSel = useSelection(tools.length);
+  const initialIdx = Math.max(0, tools.findIndex((t) => t.id === initialTool));
+  const toolSel = useSelection(tools.length, initialIdx);
   const activeTool = tools[toolSel.selected]!;
   const sessions = sessionsByTool[activeTool.id] ?? [];
   const groups = useMemo(() => groupByProject(sessions), [sessions]);

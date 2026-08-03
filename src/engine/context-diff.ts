@@ -5,8 +5,6 @@
  * pruned (compaction), and the token delta.
  */
 import type { ContextPoint, NormalizedMessage } from "../adapters/types.ts";
-import { contextTokens } from "./tokens.ts";
-
 export interface CompactionInfo {
   entryIndex: number;
   tokensBefore: number;
@@ -78,8 +76,8 @@ export function buildRequestSteps(points: ContextPoint[], compactions: Compactio
         }
       }
     }
-    const prevTokens = prev ? contextTokens(prev.usage.input, prev.usage.cacheRead) : 0;
-    const curTokens = contextTokens(point.usage.input, point.usage.cacheRead);
+    const prevTokens = prev ? prev.contextTokens : 0;
+    const curTokens = point.contextTokens;
     steps.push({
       index: i,
       point,
@@ -118,7 +116,7 @@ export function sessionCurve(points: ContextPoint[], compactions: CompactionInfo
     return {
       requestIndex: p.requestIndex,
       turnIndex: p.turnIndex,
-      contextTokens: contextTokens(p.usage.input, p.usage.cacheRead),
+      contextTokens: p.contextTokens,
       input: p.usage.input,
       cacheRead: p.usage.cacheRead,
       output: p.usage.output,

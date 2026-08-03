@@ -5,10 +5,14 @@ reveals the *before* and *after* context, what was added, what was pruned by
 compaction, which `AGENTS.md`/`CLAUDE.md` files were injected, and the full
 reconstructed system prompt.
 
-Built with **Bun + React + Ink**. Ships **Pi** (context reconstructed from vendored
-Pi internals) and **Codex** (system prompt + AGENTS.md stored inline — exact, no
-reconstruction). The architecture is adapter-based so other agents (Claude Code,
-opencode, Cursor, …) plug in with a single module.
+Built with **Bun + React + Ink**. Ships three adapters:
+- **Pi** — context reconstructed from vendored Pi internals (compaction-aware)
+- **Codex** — system prompt + AGENTS.md stored inline (exact, no reconstruction)
+- **Claude Code** — exact per-request usage/tokens; system prompt not persisted
+  by Claude Code, so that view is unavailable and context files are reconstructed
+
+The architecture is adapter-based; other agents (opencode, Cursor, …) plug in
+with a single module.
 
 ```
 ╭──────────────────────╮╭──────────────────────────────────────────────────────╮
@@ -63,7 +67,7 @@ before/after story is byte-exact.
 
 | Screen | Key | Shows |
 | --- | --- | --- |
-| Home | — | agent tools (Pi, Codex, …) + projects with session counts and token totals |
+| Home | — | agent tools (Pi, Codex, Claude Code, …) + projects with session counts and token totals |
 | Session list | `Enter` | searchable sessions: model, started, msgs, input/cache tokens, ⚒ compaction count |
 | Transcript | `Enter` | full session: user prompts, thinking, tool calls + results, model changes, custom events, per-request token usage |
 | Context view | `c` | token curve + before/after diff + context snapshot per request |
@@ -133,9 +137,13 @@ src/
     pi/context.ts   system-prompt reconstruction, per-request context points
     codex/index.ts  inline session parsing (exact): base_instructions, developer/user
                     messages (permissions/AGENTS.md/skills), token_count usage, turn_context
+    claude/index.ts ~/.claude/projects/*.jsonl: per-request usage (input+cache_read+
+                    cache_creation), block-grouped assistant calls, command wrappers,
+                    ai-title names; system prompt not persisted → empty + note
   engine/
     turns.ts        turn summarization, token totals
-    context-diff.ts before/after diff, compaction markers, token curve
+    context-diff.ts before/after diff, compaction markers, token curve (uses each
+                    point's own contextTokens — adapters define full-context metric)
     tokens.ts       token formatting, bars, relative time
   vendor/pi/        vendored Pi internals (MIT) — session-context, system-prompt,
                     context-files, messages, tool-snippets (generated)
@@ -144,7 +152,10 @@ src/
   app.tsx           screen routing + help
 scripts/
   extract-tool-snippets.ts  regenerates vendor/pi/tool-snippets.ts from installed pi
-  smoke.ts                  adapter sanity check against real sessions
+  smoke.ts                  adapter sanity check against real Pi sessions
+  smoke-codex.ts            codex adapter sanity check
+  smoke-claude.ts           claude adapter sanity check
+  all-tools-ui-test.tsx     drives the full UI across every available adapter
   render-test.tsx           headless snapshot of every screen
   render-loop-test.tsx      drives the full UI with fake stdin/stdout
 ```
@@ -156,7 +167,10 @@ registering it in `registry.ts` — the renderer is shared.
 
 - [x] Pi adapter with per-prompt before/after context
 - [x] Codex adapter — exact context (system prompt inline), no reconstruction
-- [ ] Claude Code (`~/.claude/projects/*/*.jsonl`)
+- [x] Claude Code adapter — exact per-request usage; system prompt not persisted
+- [ ] opencode (`~/.local/share/opencode/` SQLite)
+- [ ] command-code (`~/.commandcode/projects/`)
+- [ ] Cursor / VS Code Copilot (SQLite stores)
 - [ ] opencode (`~/.local/share/opencode/` SQLite)
 - [ ] Codex (`~/.codex/sessions/` — system prompt stored inline)
 - [ ] command-code (`~/.commandcode/projects/`)

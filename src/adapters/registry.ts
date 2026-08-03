@@ -6,6 +6,7 @@
 import type { AgentSession, AgentTool, SessionMeta, ToolInfo } from "./types.ts";
 import { discoverSessions as discoverPi, loadSession as loadPi } from "./pi/index.ts";
 import { discoverSessions as discoverCodex, loadSession as loadCodex } from "./codex/index.ts";
+import { discoverSessions as discoverClaude, loadSession as loadClaude } from "./claude/index.ts";
 
 export const TOOLS: ToolInfo[] = [
   {
@@ -25,8 +26,8 @@ export const TOOLS: ToolInfo[] = [
   {
     id: "claude",
     name: "Claude Code",
-    description: "~/.claude/projects/*.jsonl (adapter planned)",
-    available: false,
+    description: "~/.claude/projects/*.jsonl — exact per-request usage; system prompt not persisted",
+    available: true,
     storage: ["~/.claude/projects/"],
   },
   {
@@ -70,6 +71,8 @@ export function discoverSessions(tool: AgentTool): SessionMeta[] {
       return discoverPi();
     case "codex":
       return discoverCodex();
+    case "claude":
+      return discoverClaude();
     default:
       return [];
   }
@@ -82,6 +85,8 @@ export function loadSession(meta: SessionMeta): AgentSession {
       return loadPi(meta.path);
     case "codex":
       return loadCodex(meta.path);
+    case "claude":
+      return loadClaude(meta.path);
     default:
       throw new Error(`adapter not implemented: ${meta.tool}`);
   }
