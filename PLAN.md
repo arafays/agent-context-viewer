@@ -107,8 +107,8 @@ For each assistant turn N in a Pi session:
 - [ ] 2. Vendor Pi functions from installed `@earendil-works/pi-coding-agent@0.83.0` dist (with MIT header + NOTE.md): session-context, system-prompt, context-files, messages; write `scripts/extract-tool-snippets.ts` and generate `tool-snippets.ts`.
 - [ ] 3. Pi adapter: session discovery (walk `~/.pi/agent/sessions/*/`, decode cwd slug, fast header scan for id/timestamp/cwd), tolerant JSONL parsing, entry → turn grouping, usage totals, per-session meta (model, thinking level, compaction count, custom events).
 - [ ] 4. Engine: `turns.ts` (turn boundaries, token math), `context-diff.ts` (before/after snapshot + diff + compaction markers).
-- [ ] 5. UI: Home (tool picker) → SessionList (search, metadata) → SessionDetail (transcript) → ContextView (curve + snapshot + diff) + SystemPromptView + ContextFilesView. Keybindings: `j/k` scroll, `Enter` open, `Tab` tool switch, `s` system prompt, `f` context files, `c` context view, `q`/`Esc` back, `/` search.
-- [ ] 6. Polish: large-session lazy reading, malformed-line tolerance, help panel, loading states, README with screenshots/usage.
+- [x] 5. UI: Home (tool picker) → SessionList (search, metadata) → SessionDetail (transcript) → ContextView (curve + snapshot + diff) + SystemPromptView + ContextFilesView. Keybindings: `j/k` scroll, `Enter` open, `Tab` tool switch, `s` system prompt, `f` context files, `c` context view, `q`/`Esc` back, `/` search.
+- [x] 6. Polish: large-session lazy reading, malformed-line tolerance, help panel, loading states, README with screenshots/usage.
 - [ ] 7. (Future, out of scope for v1) adapters: claude, opencode, codex, cmd, cursor, vscode — registry already supports them.
 
 ## Verification
