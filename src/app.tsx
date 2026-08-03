@@ -4,9 +4,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import type { AgentTool, SessionMeta } from "./adapters/types.ts";
-import { discoverSessions } from "./adapters/registry.ts";
-import type { PiSession } from "./adapters/pi/index.ts";
-import { loadSession } from "./adapters/pi/index.ts";
+import { availableTools, discoverSessions, loadSession } from "./adapters/registry.ts";
+import type { AgentSession } from "./adapters/types.ts";
 import { Home } from "./ui/home.tsx";
 import { SessionList } from "./ui/session-list.tsx";
 import { SessionDetail } from "./ui/session-detail.tsx";
@@ -18,15 +17,15 @@ import { Spinner } from "./ui/components.tsx";
 type Screen =
   | { name: "home" }
   | { name: "list"; tool: AgentTool; project: string | null }
-  | { name: "detail"; session: SessionMeta; pi?: PiSession }
-  | { name: "context"; session: PiSession }
-  | { name: "sysprompt"; session: PiSession }
-  | { name: "files"; session: PiSession };
+  | { name: "detail"; session: SessionMeta; pi?: AgentSession }
+  | { name: "context"; session: AgentSession }
+  | { name: "sysprompt"; session: AgentSession }
+  | { name: "files"; session: AgentSession };
 
 export function App() {
   const [sessionsByTool, setSessionsByTool] = useState<Record<AgentTool, SessionMeta[]> | null>(null);
   const [screen, setScreen] = useState<Screen>({ name: "home" });
-  const [cache, setCache] = useState<Map<string, PiSession>>(new Map());
+  const [cache, setCache] = useState<Map<string, AgentSession>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
 
@@ -38,7 +37,10 @@ export function App() {
 
   useEffect(() => {
     try {
-      const byTool = { pi: discoverSessions("pi") } as Record<AgentTool, SessionMeta[]>;
+      const byTool = {} as Record<AgentTool, SessionMeta[]>;
+      for (const tool of availableTools()) {
+        byTool[tool] = discoverSessions(tool);
+      }
       setSessionsByTool(byTool);
     } catch (e) {
       setError(String(e));
@@ -52,7 +54,7 @@ export function App() {
       return;
     }
     try {
-      const s = loadSession(meta.path);
+      const s = loadSession(meta);
       const next = new Map(cache);
       next.set(meta.path, s);
       setCache(next);
@@ -132,7 +134,7 @@ export function App() {
   return <Box flexDirection="column">{body}</Box>;
 }
 
-function sessionMetaOf(s: PiSession): SessionMeta {
+function sessionMetaOf(s: AgentSession): SessionMeta {
   return s.meta;
 }
 

@@ -1,9 +1,11 @@
 /**
- * Agent adapter registry. v1 ships only the Pi adapter; the rest are declared
- * so the UI can show them as "coming soon" and adapters can be added incrementally.
+ * Agent adapter registry. Dispatches discovery + loading to the adapter
+ * registered for each tool. v1 ships Pi + Codex; the rest are declared so the
+ * UI can show them as "coming soon" and adapters can be added incrementally.
  */
-import type { AgentTool, SessionMeta, ToolInfo } from "./types.ts";
-import { discoverSessions as discoverPi } from "./pi/index.ts";
+import type { AgentSession, AgentTool, SessionMeta, ToolInfo } from "./types.ts";
+import { discoverSessions as discoverPi, loadSession as loadPi } from "./pi/index.ts";
+import { discoverSessions as discoverCodex, loadSession as loadCodex } from "./codex/index.ts";
 
 export const TOOLS: ToolInfo[] = [
   {
@@ -12,6 +14,13 @@ export const TOOLS: ToolInfo[] = [
     description: "@earendil-works/pi-coding-agent — sessions, context reconstruction, compaction",
     available: true,
     storage: ["~/.pi/agent/sessions/"],
+  },
+  {
+    id: "codex",
+    name: "Codex",
+    description: "openai/codex — system prompt + AGENTS.md stored inline per session (exact)",
+    available: true,
+    storage: ["~/.codex/sessions/"],
   },
   {
     id: "claude",
@@ -26,13 +35,6 @@ export const TOOLS: ToolInfo[] = [
     description: "~/.local/share/opencode/opencode.db (adapter planned)",
     available: false,
     storage: ["~/.local/share/opencode/"],
-  },
-  {
-    id: "codex",
-    name: "Codex",
-    description: "~/.codex/sessions/ (adapter planned)",
-    available: false,
-    storage: ["~/.codex/sessions/"],
   },
   {
     id: "cmd",
@@ -61,12 +63,31 @@ export function getTool(tool: AgentTool): ToolInfo {
   return TOOLS.find((t) => t.id === tool)!;
 }
 
-/** Discover sessions for a tool. Only Pi is wired in v1. */
+/** Discover sessions for a tool. */
 export function discoverSessions(tool: AgentTool): SessionMeta[] {
   switch (tool) {
     case "pi":
       return discoverPi();
+    case "codex":
+      return discoverCodex();
     default:
       return [];
   }
+}
+
+/** Load a full session for a tool. */
+export function loadSession(meta: SessionMeta): AgentSession {
+  switch (meta.tool) {
+    case "pi":
+      return loadPi(meta.path);
+    case "codex":
+      return loadCodex(meta.path);
+    default:
+      throw new Error(`adapter not implemented: ${meta.tool}`);
+  }
+}
+
+/** Tools that have a working adapter on this machine. */
+export function availableTools(): AgentTool[] {
+  return TOOLS.filter((t) => t.available).map((t) => t.id);
 }

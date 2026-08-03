@@ -5,15 +5,18 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text } from "ink";
 import { Header, KeyHint, ListKeyBindings, Spinner, useSelection, useTerminalSize } from "./components.tsx";
-import type { PiSession } from "../adapters/pi/index.ts";
-import { buildSessionContextInfo } from "../adapters/pi/context.ts";
+import type { AgentSession } from "../adapters/types.ts";
 
-export function SystemPromptView({ session, onBack }: { session: PiSession; onBack: () => void }) {
-  const info = useMemo(() => buildSessionContextInfo(session.entries, session.meta.cwd), [session]);
+export function SystemPromptView({ session, onBack }: { session: AgentSession; onBack: () => void }) {
+  const info = useMemo(() => session.contextInfo, [session]);
 
   const lines = useMemo(() => {
     const l: string[] = [];
-    l.push(`SYSTEM PROMPT (reconstructed from pi@0.83.0 — AGENTS.md as of today)`);
+    l.push(
+      info.reconstructed
+        ? `SYSTEM PROMPT (reconstructed from pi@0.83.0 — AGENTS.md as of today)`
+        : `SYSTEM PROMPT (exact — stored inline in the session file)`,
+    );
     l.push(`tools: ${info.tools.join(", ")}`);
     l.push(`context files: ${info.contextFiles.map((f) => f.path).join(" | ") || "(none)"}`);
     l.push(`skills: ${info.skills.map((s) => s.name).join(", ") || "(none)"}`);
@@ -31,7 +34,7 @@ export function SystemPromptView({ session, onBack }: { session: PiSession; onBa
     <Box flexDirection="column">
       <Header
         title={`System prompt — ${session.meta.id.slice(0, 8)}`}
-        subtitle={`${session.meta.cwd} · reconstructed`}
+        subtitle={`${session.meta.cwd} · ${info.reconstructed ? "reconstructed" : "exact (inline)"}`}
       />
       <ScrollableText lines={lines} selected={sel.selected} topOffset={3} bottomOffset={1} />
       <Box paddingLeft={1} paddingTop={1}>

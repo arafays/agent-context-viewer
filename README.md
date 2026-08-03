@@ -5,22 +5,24 @@ reveals the *before* and *after* context, what was added, what was pruned by
 compaction, which `AGENTS.md`/`CLAUDE.md` files were injected, and the full
 reconstructed system prompt.
 
-Built with **Bun + React + Ink**, running on **Pi** (`@earendil-works/pi-coding-agent`)
-sessions first (richest format). The architecture is adapter-based so other agents
-(Claude Code, opencode, Codex, Cursor, …) can be plugged in later.
+Built with **Bun + React + Ink**. Ships **Pi** (context reconstructed from vendored
+Pi internals) and **Codex** (system prompt + AGENTS.md stored inline — exact, no
+reconstruction). The architecture is adapter-based so other agents (Claude Code,
+opencode, Cursor, …) plug in with a single module.
 
 ```
 ╭──────────────────────╮╭──────────────────────────────────────────────────────╮
 │ AGENTS               ││  PROJECTS — Pi                                       │
 │ ▶ Pi        59       ││ ▶ home/arafays/projects  2 sessions                  │
 │             sessions ││     20,668,373 tokens · last 47m ago                 │
-│   Claude Code   —    ││   home/arafays  10 sessions                          │
-│   opencode      —    ││     4,679,275 tokens · last 11d ago                  │
-│   Codex         —    ││   …                                                  │
-│   Command Code  —    ││   home/arafays/.local/share/chezmoi  14 sessions     │
-│   Cursor        —    ││     17,152,463 tokens · last 13d ago                 │
-│   VS Code       —    ││                                                      │
-│                      ││   all Pi sessions  (59)                              │
+│   Codex        2     ││   home/arafays  10 sessions                          │
+│             sessions ││     4,679,275 tokens · last 11d ago                  │
+│   Claude Code   —    ││   …                                                  │
+│   opencode      —    ││   home/arafays/.local/share/chezmoi  14 sessions     │
+│   Command Code  —    ││     17,152,463 tokens · last 13d ago                 │
+│   Cursor        —    ││                                                      │
+│   VS Code       —    ││   all Pi sessions  (59)                              │
+│                      ││                                                      │
 ╰──────────────────────╯╰──────────────────────────────────────────────────────╯
 
  move j/k  tool Tab/g/G  search /  open Enter  quit q
@@ -52,12 +54,16 @@ plus the exact context snapshot the model saw.
 
 You can see a real session grow from 15.8k tokens (first prompt) to 195k tokens,
 then drop to 47k when a compaction event folds the history into a summary message.
+Codex sessions need no reconstruction at all — the curve, the AGENTS.md injection,
+even the exact system prompt are stored inline (`session_meta.base_instructions`
+plus developer/user-role messages for permissions, AGENTS.md and skills), so the
+before/after story is byte-exact.
 
 ## Screens
 
 | Screen | Key | Shows |
 | --- | --- | --- |
-| Home | — | agent tools + projects with session counts and token totals |
+| Home | — | agent tools (Pi, Codex, …) + projects with session counts and token totals |
 | Session list | `Enter` | searchable sessions: model, started, msgs, input/cache tokens, ⚒ compaction count |
 | Transcript | `Enter` | full session: user prompts, thinking, tool calls + results, model changes, custom events, per-request token usage |
 | Context view | `c` | token curve + before/after diff + context snapshot per request |
@@ -110,9 +116,11 @@ assistant message (`input` + `cacheRead`). The before-context for request *N* is
 the session state at the parent entry (i.e. what the model saw, excluding the
 response itself).
 
-**Caveat:** `AGENTS.md` files are read as they exist *today*; if they changed
+**Caveat (Pi only):** `AGENTS.md` files are read as they exist *today*; if they changed
 since the session ran, the reconstruction is a faithful snapshot of the current
 files, not a time-travel. Tool snippets are static per Pi version.
+**Codex is exact** — every view (system prompt, context files, per-request diff)
+is read straight from the session file.
 
 ## Architecture
 
@@ -120,9 +128,11 @@ files, not a time-travel. Tool snippets are static per Pi version.
 src/
   adapters/
     types.ts        normalized session model (ToolInfo, SessionMeta, Turn, ContextPoint…)
-    registry.ts     tool registry + dispatch
+    registry.ts     tool registry + discovery/load dispatch
     pi/index.ts     discovery (fast header scan), tolerant JSONL parse, turn grouping, usage
     pi/context.ts   system-prompt reconstruction, per-request context points
+    codex/index.ts  inline session parsing (exact): base_instructions, developer/user
+                    messages (permissions/AGENTS.md/skills), token_count usage, turn_context
   engine/
     turns.ts        turn summarization, token totals
     context-diff.ts before/after diff, compaction markers, token curve
@@ -142,9 +152,10 @@ scripts/
 Adding an agent = implementing the adapter interface in `adapters/types.ts` and
 registering it in `registry.ts` — the renderer is shared.
 
-## Roadmap (v1 done, future adapters)
+## Roadmap
 
 - [x] Pi adapter with per-prompt before/after context
+- [x] Codex adapter — exact context (system prompt inline), no reconstruction
 - [ ] Claude Code (`~/.claude/projects/*/*.jsonl`)
 - [ ] opencode (`~/.local/share/opencode/` SQLite)
 - [ ] Codex (`~/.codex/sessions/` — system prompt stored inline)

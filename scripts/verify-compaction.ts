@@ -15,7 +15,7 @@ const compactions = s.turns.flatMap((t) =>
     modifiedFiles: [] as string[],
   })),
 );
-const points = buildContextPoints(s.entries, s.assistantCalls);
+const points = s.contextPoints;
 const steps = buildRequestSteps(points, compactions);
 const curve = sessionCurve(points, compactions);
 const cIdx = curve.findIndex((b) => b.compacted);

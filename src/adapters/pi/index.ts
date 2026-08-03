@@ -7,6 +7,7 @@ import type { Stats } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type {
+  AgentSession,
   ContentBlockView,
   NormalizedMessage,
   SessionEventView,
@@ -14,6 +15,7 @@ import type {
   Turn,
   UsageTotals,
 } from "../types.ts";
+import { buildContextPoints, buildSessionContextInfo } from "./context.ts";
 import { loadEntriesFromFile, buildSessionContext } from "../../vendor/pi/session-context.ts";
 import type { AgentMessage, FileEntry, SessionEntry } from "../../vendor/pi/types.ts";
 
@@ -195,15 +197,8 @@ function summarizeEntries(entries: SessionEntry[]) {
 // Full session parse
 // ---------------------------------------------------------------------------
 
-export interface PiSession {
-  meta: SessionMeta;
-  entries: SessionEntry[];
-  turns: Turn[];
-  events: SessionEventView[];
-  /** every LLM request in order (each has usage) */
-  assistantCalls: NormalizedMessage[];
-  name?: string;
-}
+/** Backwards-compatible alias — the shared session type now lives in types.ts. */
+export type PiSession = AgentSession;
 
 type IndexedEntry = SessionEntry & { _index: number };
 
@@ -460,14 +455,22 @@ export function loadSession(path: string): PiSession {
   meta.model = currentModel ?? meta.model;
   meta.thinkingLevel = currentThinking ?? meta.thinkingLevel;
 
+  // Precompute the reconstruction once, so every UI screen is adapter-agnostic.
+  // systemPrompt + contextFiles are rebuilt from *current* AGENTS.md files
+  // (Pi does not snapshot them) — see context.ts notes.
+  const contextInfo = buildSessionContextInfo(entries, meta.cwd);
+  const contextPoints = buildContextPoints(entries, assistantCalls);
+
   return {
     meta,
-    entries,
     turns,
     events: turns.flatMap((t) => t.events),
     assistantCalls,
+    contextInfo,
+    contextPoints,
     name,
-  };
+    raw: { entries },
+  } satisfies AgentSession;
 }
 
 /** Reconstructed context messages as of a specific assistant entry. */

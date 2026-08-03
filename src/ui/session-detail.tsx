@@ -5,8 +5,8 @@
 import React, { useMemo, useState } from "react";
 import { Box, Text } from "ink";
 import { Header, KeyHint, ListKeyBindings, Spinner, useSelection, useTerminalSize } from "./components.tsx";
-import type { SessionMeta, Turn } from "../adapters/types.ts";
-import { loadSession, type PiSession } from "../adapters/pi/index.ts";
+import type { AgentSession, SessionMeta, Turn } from "../adapters/types.ts";
+import { loadSession } from "../adapters/registry.ts";
 import { summarizeTurn, userTextOf } from "../engine/turns.ts";
 import { formatTokens } from "../engine/tokens.ts";
 
@@ -46,7 +46,7 @@ function blockText(block: { kind: string; text?: string; input?: unknown; toolNa
   return block.text ?? "";
 }
 
-function buildLines(session: PiSession, showThinking: boolean): Line[] {
+function buildLines(session: AgentSession, showThinking: boolean): Line[] {
   const lines: Line[] = [];
   const push = (l: Line) => lines.push(l);
   for (const turn of session.turns) {
@@ -131,17 +131,17 @@ export function SessionDetail({
   onBack,
 }: {
   session: SessionMeta;
-  pi?: PiSession;
-  onOpenContext: (session: PiSession) => void;
-  onOpenSystemPrompt: (session: PiSession) => void;
-  onOpenFiles: (session: PiSession) => void;
+  pi?: AgentSession;
+  onOpenContext: (session: AgentSession) => void;
+  onOpenSystemPrompt: (session: AgentSession) => void;
+  onOpenFiles: (session: AgentSession) => void;
   onBack: () => void;
 }) {
   const [showThinking, setShowThinking] = useState(false);
 
   // Session parsing is synchronous; use the cached PiSession from the App when
   // available (large sessions parsed once), otherwise parse here.
-  const loaded = useMemo(() => pi ?? loadSession(session.path), [pi, session.path]);
+  const loaded = useMemo(() => pi ?? loadSession(session), [pi, session]);
   const lines = useMemo(() => (loaded ? buildLines(loaded, showThinking) : []), [loaded, showThinking]);
   const sel = useSelection(lines.length);
   const { rows } = useTerminalSize();

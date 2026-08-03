@@ -92,6 +92,7 @@ export function Home({
         return;
       }
       if (input === "q") onQuit();
+      else if (input === "\t") selectTool(1);
       else if (input === "g") selectTool(-1);
       else if (input === "G") selectTool(1);
       else if (input === "/") {

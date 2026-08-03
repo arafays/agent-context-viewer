@@ -109,7 +109,14 @@ For each assistant turn N in a Pi session:
 - [x] 4. Engine: `turns.ts` (turn boundaries, token math), `context-diff.ts` (before/after snapshot + diff + compaction markers).
 - [x] 5. UI: Home (tool picker) → SessionList (search, metadata) → SessionDetail (transcript) → ContextView (curve + snapshot + diff) + SystemPromptView + ContextFilesView. Keybindings: `j/k` scroll, `Enter` open, `Tab` tool switch, `s` system prompt, `f` context files, `c` context view, `q`/`Esc` back, `/` search.
 - [x] 6. Polish: large-session lazy reading, malformed-line tolerance, help panel, loading states, README with screenshots/usage.
-- [ ] 7. (Future, out of scope for v1) adapters: claude, opencode, codex, cmd, cursor, vscode — registry already supports them.
+- [x] 7. First additional adapter: **Codex** (`~/.codex/sessions/**/rollout-*.jsonl`) — exact context
+  (system prompt inline via `session_meta.base_instructions`, AGENTS.md/skills/permissions as
+  developer/user messages, per-request usage from `token_count`, model from `turn_context`).
+  Screens consume the shared `AgentSession` (`contextInfo` + `contextPoints` precomputed at load).
+  - [ ] claude (`~/.claude/projects/*.jsonl`) — next
+  - [ ] opencode (`~/.local/share/opencode/` SQLite)
+  - [ ] cmd (`~/.commandcode/projects/`)
+  - [ ] cursor / vscode (SQLite stores)
 
 ## Verification
 

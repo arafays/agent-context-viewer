@@ -59,7 +59,7 @@ console.log(files.split("\n").slice(0, 40).join("\n"));
 const compactions = target.turns.flatMap((t) =>
   t.events.filter((e) => e.kind === "compaction").map((e) => ({ entryIndex: t.entryEnd, tokensBefore: (e as { tokensBefore?: number }).tokensBefore ?? 0, summary: String(e.summary ?? ""), readFiles: [] as string[], modifiedFiles: [] as string[] })),
 );
-const points = buildContextPoints(target.entries, target.assistantCalls);
+const points = target.contextPoints;
 const steps = buildRequestSteps(points, compactions);
 const curve = sessionCurve(points, compactions);
 const cIdx = curve.findIndex((b) => b.compacted);
@@ -67,6 +67,6 @@ if (cIdx >= 0) {
   const st = steps[cIdx]!;
   console.error(`\n[engine] req#${st.point.requestIndex}: +${st.added.length} added, -${st.pruned.length} pruned, delta=${st.tokenDelta}, compaction=${st.compaction?.tokensBefore}`);
 }
-const info = buildSessionContextInfo(s.entries, s.meta.cwd);
+const info = s.contextInfo;
 console.error(`[engine] system prompt: ${info.systemPrompt.length} chars; files: ${info.contextFiles.length}; skills: ${info.skills.length}`);
 console.error("render-test OK");

@@ -5,11 +5,10 @@
 import React, { useMemo, useState } from "react";
 import { Box, Text } from "ink";
 import { Header, KeyHint, ListKeyBindings, ScrollList, useSelection, useTerminalSize } from "./components.tsx";
-import type { PiSession } from "../adapters/pi/index.ts";
-import { buildSessionContextInfo } from "../adapters/pi/context.ts";
+import type { AgentSession } from "../adapters/types.ts";
 
-export function ContextFilesView({ session, onBack }: { session: PiSession; onBack: () => void }) {
-  const info = useMemo(() => buildSessionContextInfo(session.entries, session.meta.cwd), [session]);
+export function ContextFilesView({ session, onBack }: { session: AgentSession; onBack: () => void }) {
+  const info = useMemo(() => session.contextInfo, [session]);
   const [selectedFile, setSelectedFile] = useState(0);
 
   const files = info.contextFiles;

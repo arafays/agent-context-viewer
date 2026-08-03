@@ -28,11 +28,11 @@ if (metas.length > 0) {
   const s = loadSession(metas[0]!.path);
   console.log(`\n=== full parse of ${metas[0]!.path.split("/").pop()} ===`);
   console.log(`turns=${s.turns.length} assistantCalls=${s.assistantCalls.length} events=${s.events.length} name=${s.name ?? "—"}`);
-  const info = buildSessionContextInfo(s.entries, s.meta.cwd);
+  const info = s.contextInfo;
   console.log(`system prompt: ${info.systemPrompt.length} chars, context files: ${info.contextFiles.map((f) => f.path).join(" | ")}`);
   console.log(`tools: ${info.tools.join(", ")}`);
   console.log(`skills: ${info.skills.map((sk) => sk.name).join(", ") || "none"}`);
-  const points = buildContextPoints(s.entries, s.assistantCalls);
+  const points = s.contextPoints;
   console.log(`context points: ${points.length}`);
   for (const p of points.slice(0, 6)) {
     console.log(

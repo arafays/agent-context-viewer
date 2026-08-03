@@ -6,8 +6,7 @@
 import React, { useMemo, useState } from "react";
 import { Box, Text } from "ink";
 import { Header, KeyHint, ListKeyBindings, useSelection, useTerminalSize } from "./components.tsx";
-import type { PiSession } from "../adapters/pi/index.ts";
-import { buildContextPoints, buildSessionContextInfo } from "../adapters/pi/context.ts";
+import type { AgentSession } from "../adapters/types.ts";
 import { buildRequestSteps, sessionCurve, type RequestStep } from "../engine/context-diff.ts";
 import { formatTokens, tokenBar } from "../engine/tokens.ts";
 
@@ -16,8 +15,8 @@ export function ContextView({
   onOpenSystemPrompt,
   onBack,
 }: {
-  session: PiSession;
-  onOpenSystemPrompt: (s: PiSession) => void;
+  session: AgentSession;
+  onOpenSystemPrompt: (s: AgentSession) => void;
   onBack: () => void;
 }) {
   const { rows } = useTerminalSize();
@@ -38,11 +37,10 @@ export function ContextView({
           modifiedFiles: [] as string[],
         })),
     );
-    const points = buildContextPoints(session.entries, session.assistantCalls);
     return {
-      steps: buildRequestSteps(points, compactions),
-      curve: sessionCurve(points, compactions),
-      info: buildSessionContextInfo(session.entries, session.meta.cwd),
+      steps: buildRequestSteps(session.contextPoints, compactions),
+      curve: sessionCurve(session.contextPoints, compactions),
+      info: session.contextInfo,
     };
   }, [session]);
 
@@ -221,6 +219,9 @@ function SnapshotList({ step, offset, height }: { step: RequestStep; offset: num
         color: "gray",
         dim: true,
       });
+    } else if (m.role === "developer") {
+      // codex embeds permissions / AGENTS.md / skills as developer-role messages
+      rows.push({ text: `sys: ${text.slice(0, 140) || "(empty)"}`, color: "gray", dim: true });
     } else {
       rows.push({ text: `${m.role}: ${text || "(empty)"}`, color: added ? "green" : "white", dim: !added });
     }

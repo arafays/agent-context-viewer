@@ -67,7 +67,14 @@ export interface UsageTotals {
 
 /** A single message (user prompt, assistant reply, tool result, compaction…). */
 export interface NormalizedMessage {
-  role: "user" | "assistant" | "toolResult" | "custom" | "compactionSummary" | "branchSummary";
+  role:
+    | "user"
+    | "assistant"
+    | "toolResult"
+    | "custom"
+    | "compactionSummary"
+    | "branchSummary"
+    | "developer";
   timestamp: number; // epoch ms
   blocks: ContentBlockView[];
   provider?: string;
@@ -143,4 +150,23 @@ export interface SessionContextInfo {
   /** reconstructed: true → system prompt/context files rebuilt from current files */
   reconstructed: boolean;
   notes: string[];
+}
+
+/**
+ * A fully loaded session, as produced by any adapter's loadSession().
+ * `contextInfo` + `contextPoints` are precomputed at load time so the UI is
+ * adapter-agnostic: every adapter must fill them (reconstructed or exact).
+ */
+export interface AgentSession {
+  meta: SessionMeta;
+  turns: Turn[];
+  events: SessionEventView[];
+  /** every LLM request in order (each has usage) */
+  assistantCalls: NormalizedMessage[];
+  contextInfo: SessionContextInfo;
+  /** one point per LLM request: context size + exact/reconstructed snapshot */
+  contextPoints: ContextPoint[];
+  name?: string;
+  /** adapter-specific raw data (pi: session entries) */
+  raw?: unknown;
 }
