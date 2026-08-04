@@ -2,6 +2,7 @@
   "name": "agent-context-viewer",
   "version": "0.1.0",
   "description": "TUI that shows how AI coding agents assemble context — system prompts, AGENTS.md files, per-turn context before/after, and full transcripts.",
+  "license": "MIT",
   "module": "src/main.tsx",
   "type": "module",
   "private": true,
