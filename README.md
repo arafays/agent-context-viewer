@@ -5,7 +5,7 @@ reveals the *before* and *after* context, what was added, what was pruned by
 compaction, which `AGENTS.md`/`CLAUDE.md` files were injected, and the full
 reconstructed system prompt.
 
-Built with **Bun + React + Ink**. Ships **four** adapters:
+Built with **Bun + OpenTUI + React**. Ships **four** adapters:
 - **Pi** — context reconstructed from vendored Pi internals (compaction-aware)
 - **Codex** — system prompt + AGENTS.md stored inline (exact, no reconstruction)
 - **Claude Code** — exact per-request usage/tokens; system prompt not persisted,

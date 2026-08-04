@@ -1,12 +1,8 @@
-/**
- * Session list screen: searchable, metadata (model, tokens, compaction badge).
- */
-import React, { useMemo, useState } from "react";
-import { Box, Text } from "ink";
-import { Header, KeyHint, ListKeyBindings, ScrollList, useSelection } from "./components.tsx";
-import type { SessionMeta } from "../adapters/types.ts";
-import { getTool } from "../adapters/registry.ts";
-import { formatTokens, relativeTime, shortDateTime } from "../engine/tokens.ts";
+import { TextAttributes } from "@opentui/core"
+import { useKeyboard, useTerminalDimensions } from "@opentui/react"
+import { useMemo, useState } from "react"
+import { Header, KeyHint, useSelection } from "./components.tsx"
+import type { AgentTool, SessionMeta } from "../adapters/types.ts"
 
 export function SessionList({
   tool,
@@ -15,96 +11,106 @@ export function SessionList({
   onOpen,
   onBack,
 }: {
-  tool: SessionMeta["tool"];
+  tool: AgentTool;
   project: string | null;
   sessions: SessionMeta[];
-  onOpen: (session: SessionMeta) => void;
+  onOpen: (meta: SessionMeta) => void;
   onBack: () => void;
 }) {
+  const { width: columns, height: rows } = useTerminalDimensions();
+  const [search, setSearch] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [searching, setSearching] = useState(false);
+
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return sessions;
+    if (!query) return sessions;
+    const q = query.toLowerCase();
     return sessions.filter(
       (s) =>
         (s.model ?? "").toLowerCase().includes(q) ||
-        s.id.toLowerCase().includes(q) ||
         (s.name ?? "").toLowerCase().includes(q) ||
-        s.path.toLowerCase().includes(q),
+        s.id.toLowerCase().includes(q) ||
+        s.project.toLowerCase().includes(q),
     );
   }, [sessions, query]);
+
   const sel = useSelection(filtered.length);
 
-  ListKeyBindings({
-    move: sel.move,
-    onOpen: () => filtered[sel.selected] && onOpen(filtered[sel.selected]!),
-    extra: (input, key) => {
-      if (searching) {
-        if (key.escape) setSearching(false);
-        else if (key.return) setSearching(false);
-        else if (key.backspace) setQuery((q) => q.slice(0, -1));
-        else if (input && input.length === 1) setQuery((q) => q + input);
-        return;
+  const toolName = (tool: string) => {
+    const names: Record<string, string> = {
+      pi: "Pi",
+      codex: "Codex",
+      claude: "Claude Code",
+      opencode: "opencode",
+    };
+    return names[tool] ?? tool;
+  };
+
+  useKeyboard((key) => {
+    if (search !== null) {
+      if (key.name === "escape") { setSearch(null); }
+      else if (key.name === "return") { setSearch(null); }
+      else if (key.name === "backspace") { setQuery((q) => q.slice(0, -1)); }
+      else if (key.sequence && key.sequence.length === 1 && key.sequence.charCodeAt(0) >= 32) {
+        setQuery((q) => q + key.sequence);
       }
-      if (input === "q" || key.escape) onBack();
-      else if (input === "/") {
-        setSearching(true);
-        setQuery("");
-      }
-    },
+      return;
+    }
+    if (key.name === "down" || key.name === "j") sel.move(1);
+    else if (key.name === "up" || key.name === "k") sel.move(-1);
+    else if (key.name === "pageDown") sel.move(10);
+    else if (key.name === "pageUp") sel.move(-10);
+    else if (key.name === "home") sel.move(-Number.MAX_SAFE_INTEGER);
+    else if (key.name === "end") sel.move(Number.MAX_SAFE_INTEGER);
+    else if (key.name === "return") {
+      const m = filtered[sel.selected];
+      if (m) onOpen(m);
+    } else if (key.name === "/") { setSearch(""); setQuery(""); }
+    else if (key.name === "q" || key.name === "escape") onBack();
   });
 
-  const toolName = getTool(tool).name;
-  const title = project ? `${toolName} — ${project}` : `All ${toolName} sessions`;
+  const subtitle = project
+    ? `${project} · ${filtered.length} session${filtered.length === 1 ? "" : "s"}${query ? ` (filtered)` : ""}`
+    : `all ${toolName(tool)} sessions · ${filtered.length} session${filtered.length === 1 ? "" : "s"}${query ? ` (filtered)` : ""}`;
+
+  const half = Math.max(1, Math.floor(rows - 6) / 2);
+  const start = Math.max(0, Math.min(sel.selected - half, Math.max(0, filtered.length - (rows - 6))));
+  const visible = filtered.slice(start, start + rows - 6);
 
   return (
-    <Box flexDirection="column">
-      <Header title={title} subtitle={`${sessions.length} sessions`} />
-      <Box paddingLeft={1}>
-        <Text dimColor>{"model".padEnd(34)}started        msgs   in        cache      cmp</Text>
-      </Box>
-      <ScrollList
-        items={filtered}
-        selected={sel.selected}
-        onSelect={sel.setSelected}
-        topOffset={3}
-        bottomOffset={1}
-        renderItem={(s, _i, isSel) => {
-          const model = (s.model ?? "—").padEnd(30);
-          const date = shortDateTime(s.startedAt).padEnd(18);
-          const msgs = String(s.messageCount).padStart(4).padEnd(6);
-          const input = formatTokens(s.tokens.input).padStart(6).padEnd(8);
-          const cache = formatTokens(s.tokens.cacheRead).padStart(8).padEnd(10);
-          const comp = s.compactionCount > 0 ? `⚒ ${s.compactionCount}` : "·";
-          const line = `${model} ${date} ${msgs} ${input} ${cache} ${comp}  ${s.cwd || s.path}`;
-          return (
-            <Box paddingLeft={1} flexDirection="column">
-              <Text color={isSel ? "cyan" : "dim"} bold={isSel} wrap="truncate-end">
+    <box flexDirection="column" width="100%" height={rows}>
+      <Header title={project ?? `All ${toolName(tool)} sessions`} subtitle={subtitle} />
+      {visible.length === 0 ? (
+        <text fg="gray" attributes={TextAttributes.DIM}>  (no sessions found)</text>
+      ) : (
+        <box flexDirection="column">
+          {visible.map((s, i) => {
+            const absIdx = start + i;
+            const isSel = absIdx === sel.selected;
+            const date = s.updatedAt.slice(0, 10).replace(/^(\d+)-(\d+)-(\d+).*$/, "$2/$3");
+            const msgs = s.messageCount;
+            const inK = s.tokens.input >= 1000 ? `${(s.tokens.input / 1000).toFixed(1)}k` : String(s.tokens.input);
+            const cacheK = s.tokens.cacheRead >= 1000 ? `${(s.tokens.cacheRead / 1000).toFixed(1)}k` : String(s.tokens.cacheRead);
+            const comp = s.compactionCount > 0 ? ` ⚒${s.compactionCount}` : "";
+            return (
+              <text
+                key={s.id}
+                attributes={isSel ? TextAttributes.BOLD : TextAttributes.DIM}
+                fg={isSel ? "cyan" : undefined}
+              >
                 {isSel ? "▶ " : "  "}
-                {line}
-              </Text>
-            </Box>
-          );
-        }}
-      />
-      <Box paddingLeft={1} paddingTop={1}>
-        {searching ? (
-          <Text bold color="green">
-            / <Text>{query}</Text>
-            <Text dimColor>▌</Text>
-          </Text>
-        ) : (
-          <KeyHint
-            keys={[
-              ["j/k", "scroll"],
-              ["/", "search"],
-              ["Enter", "open"],
-              ["q", "back"],
-            ]}
-          />
-        )}
-      </Box>
-    </Box>
+                {(s.model ?? "—").padEnd(24).slice(0, 24)}
+                {date.padStart(7)}
+                {String(msgs).padStart(5)}
+                {inK.padStart(8)}
+                {cacheK.padStart(9)}
+                {comp}
+                {"  "}{s.cwd || s.project}
+              </text>
+            );
+          })}
+        </box>
+      )}
+      <KeyHint keys={[["scroll", "j/k"], ["search", "/"], ["open", "Enter"], ["back", "q"]]} />
+    </box>
   );
 }

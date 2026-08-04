@@ -1,85 +1,79 @@
-/**
- * Context Files view — the AGENTS.md/CLAUDE.md hierarchy that was injected
- * into the system prompt (global agent file + ancestors from cwd up to root).
- */
-import React, { useMemo, useState } from "react";
-import { Box, Text } from "ink";
-import { Header, KeyHint, ListKeyBindings, ScrollList, useSelection, useTerminalSize } from "./components.tsx";
-import type { AgentSession } from "../adapters/types.ts";
+import { TextAttributes } from "@opentui/core"
+import { useKeyboard, useTerminalDimensions } from "@opentui/react"
+import { useState } from "react"
+import { Header, KeyHint, useSelection } from "./components.tsx"
+import type { AgentSession } from "../adapters/types.ts"
 
-export function ContextFilesView({ session, onBack }: { session: AgentSession; onBack: () => void }) {
-  const info = useMemo(() => session.contextInfo, [session]);
-  const [selectedFile, setSelectedFile] = useState(0);
-
+export function ContextFilesView({
+  session,
+  onBack,
+}: {
+  session: AgentSession;
+  onBack: () => void;
+}) {
+  const { width: columns, height: rows } = useTerminalDimensions();
+  const info = session.contextInfo;
   const files = info.contextFiles;
   const fileSel = useSelection(files.length);
-  const activeFile = files[Math.min(fileSel.selected, Math.max(0, files.length - 1))];
+  const selectedFile = files[fileSel.selected];
 
-  ListKeyBindings({
-    move: fileSel.move,
-    onOpen: () => {},
-    extra: (input, key) => (input === "q" || key.escape) && onBack(),
+  useKeyboard((key) => {
+    if (key.name === "down" || key.name === "j") fileSel.move(1);
+    else if (key.name === "up" || key.name === "k") fileSel.move(-1);
+    else if (key.name === "home") fileSel.move(-Number.MAX_SAFE_INTEGER);
+    else if (key.name === "end") fileSel.move(Number.MAX_SAFE_INTEGER);
+    else if (key.name === "q" || key.name === "escape") onBack();
   });
 
+  const filePaneWidth = Math.floor(columns / 3);
+  const contentPaneWidth = columns - filePaneWidth - 2;
+
+  const fileLines = files.map((f, i) => ({
+    text: `${f.global ? "[global]" : "       "} ${truncPath(f.path, filePaneWidth - 12)}`,
+    sel: i === fileSel.selected,
+  }));
+
+  const content = selectedFile?.content ?? "";
+  const contentLines = content.split("\n");
+  const [contentScroll, setContentScroll] = useState(0);
+
+  const visibleContent = contentLines.slice(contentScroll, contentScroll + rows - 6);
+
   return (
-    <Box flexDirection="column">
-      <Header title={`Context files — ${session.meta.id.slice(0, 8)}`} subtitle={`AGENTS.md/CLAUDE.md loaded for ${session.meta.cwd}`} />
-      {files.length === 0 ? (
-        <Text dimColor wrap="truncate-end">no AGENTS.md/CLAUDE.md found</Text>
-      ) : (
-        <>
-          <Box flexDirection="column" borderStyle="round" borderColor="gray" marginLeft={1} marginRight={1} marginTop={1}>
-            <ScrollList
-              items={files}
-              selected={fileSel.selected}
-              onSelect={fileSel.setSelected}
-              topOffset={0}
-              bottomOffset={1}
-              renderItem={(f, _i, sel) => (
-                <Box paddingLeft={1}>
-                  <Text color={sel ? "cyan" : "dim"} bold={sel}>
-                    {sel ? "▶ " : "  "}
-                    {f.global ? "[global] " : ""}
-                  </Text>
-                  <Text color={sel ? "white" : "gray"} wrap="truncate-end">
-                    {f.path.padEnd(70)}
-                  </Text>
-                  <Text dimColor>{`  ${f.content.length.toLocaleString()} chars`}</Text>
-                </Box>
-              )}
-            />
-          </Box>
-          <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor="gray" marginLeft={1} marginRight={1}>
-            <Text bold color="gray" wrap="truncate-end">
-              {activeFile?.path ?? ""}
-            </Text>
-            {activeFile ? (
-              <FileContent content={activeFile.content} />
-            ) : null}
-          </Box>
-          <Box paddingLeft={1} paddingTop={1}>
-            <KeyHint keys={[["j/k", "file"], ["q", "back"]]} />
-          </Box>
-        </>
-      )}
-    </Box>
+    <box flexDirection="column" width="100%" height={rows}>
+      <Header title="Context files" subtitle={`${session.meta.id.slice(0, 8)}  ${files.length} file${files.length === 1 ? "" : "s"}`} />
+      <box flexDirection="row" flexGrow={1}>
+        <box flexDirection="column" width={filePaneWidth} borderStyle="rounded" borderColor="gray" padding={1}>
+          <text attributes={TextAttributes.BOLD} fg="gray"> FILES</text>
+          {fileLines.map((f, i) => (
+            <text
+              key={i}
+              attributes={f.sel ? TextAttributes.BOLD : TextAttributes.DIM}
+              fg={f.sel ? "cyan" : undefined}
+            >
+              {f.sel ? "▶ " : "  "}{f.text}
+            </text>
+          ))}
+        </box>
+        <box flexDirection="column" width={contentPaneWidth} borderStyle="rounded" borderColor="gray" padding={1}>
+          <text attributes={TextAttributes.BOLD} fg="gray"> {selectedFile?.path ?? "(select a file)"}</text>
+          {selectedFile ? (
+            <box flexDirection="column" flexGrow={1}>
+              {visibleContent.map((l, i) => (
+                <text key={i}>{l}</text>
+              ))}
+            </box>
+          ) : (
+            <text fg="gray" attributes={TextAttributes.DIM}>select a file to view its content</text>
+          )}
+        </box>
+      </box>
+      <KeyHint keys={[["scroll files", "j/k"], ["back", "q"]]} />
+    </box>
   );
 }
 
-function FileContent({ content }: { content: string }) {
-  const lines = useMemo(() => content.split("\n"), [content]);
-  const sel = useSelection(lines.length);
-  const { rows } = useTerminalSize();
-  const viewport = Math.max(1, rows - 12);
-  const start = Math.max(0, Math.min(sel.selected - Math.floor(viewport / 2), Math.max(0, lines.length - viewport)));
-  const visible = lines.slice(start, start + viewport);
-  return (
-    <Box flexDirection="column">
-      {visible.map((l, i) => (
-        <Text key={start + i} wrap="truncate-end" dimColor={l.trim() === ""}>
-          {l}
-        </Text>
-      ))}
-    </Box>
-  );
+function truncPath(path: string, max: number): string {
+  if (path.length <= max) return path;
+  return "…" + path.slice(-(max - 1));
 }

@@ -1,202 +1,231 @@
-/**
- * Session detail: full transcript (user prompts, thinking, tool calls + results,
- * assistant replies, compaction events) with line-based scrolling.
- */
-import React, { useMemo, useState } from "react";
-import { Box, Text } from "ink";
-import { Header, KeyHint, ListKeyBindings, Spinner, useSelection, useTerminalSize } from "./components.tsx";
-import type { AgentSession, SessionMeta, Turn } from "../adapters/types.ts";
-import { loadSession } from "../adapters/registry.ts";
-import { summarizeTurn, userTextOf } from "../engine/turns.ts";
-import { formatTokens } from "../engine/tokens.ts";
+import { TextAttributes } from "@opentui/core"
+import { useKeyboard, useTerminalDimensions } from "@opentui/react"
+import { useMemo, useState } from "react"
+import { Header, KeyHint, useSelection } from "./components.tsx"
+import type { AgentSession, ContentBlockView, NormalizedMessage, SessionEventView, SessionMeta, Turn } from "../adapters/types.ts"
 
-type LineColor = "green" | "white" | "cyan" | "gray" | "yellow" | "magenta";
-
-export interface Line {
-  text: string;
-  color?: LineColor;
-  bold?: boolean;
-  dim?: boolean;
-  turn?: number;
-}
-
+/** Max lines of tool-result body to show. */
 const MAX_TOOL_RESULT_LINES = 4;
+/** Max blocks rendered per message (overflow = "…N more lines"). */
 const MAX_BLOCK_LINES = 400;
 
-function truncate(text: string, maxLines: number): string[] {
-  const lines = text.split("\n");
-  if (lines.length <= maxLines) return lines;
-  return [...lines.slice(0, maxLines), `… (${lines.length - maxLines} more lines)`];
-}
-
-function blockText(block: { kind: string; text?: string; input?: unknown; toolName?: string; isError?: boolean }): string {
-  if (block.kind === "tool_use") {
-    const input =
-      typeof block.input === "string"
-        ? block.input
-        : block.input
-          ? JSON.stringify(block.input)
-          : "";
-    return `▸ ${block.toolName ?? "tool"}${input ? "  " + truncate(input, 1)[0] : ""}`;
-  }
-  if (block.kind === "tool_result") {
-    const prefix = block.isError ? "✗ " : "";
-    return prefix + (block.text ?? "");
-  }
-  return block.text ?? "";
-}
-
-function buildLines(session: AgentSession, showThinking: boolean): Line[] {
-  const lines: Line[] = [];
-  const push = (l: Line) => lines.push(l);
-  for (const turn of session.turns) {
-    push({ text: "", turn: turn.index });
-    const sum = summarizeTurn(turn);
-    const metaBits = [
-      turn.model ?? "",
-      turn.thinkingLevel ? `think:${turn.thinkingLevel}` : "",
-      turn.assistantCalls.length > 0
-        ? `${turn.assistantCalls.length} req · ctx ${formatTokens(sum.contextTokens)}`
-        : "",
-    ]
-      .filter(Boolean)
-      .join(" · ");
-    if (turn.userMessage) {
-      push({ text: `┌─ turn ${turn.index + 1}  ${metaBits}`, color: "gray", dim: true });
-      for (const block of turn.userMessage.blocks) {
-        const text = blockText(block);
-        if (text.trim()) {
-          for (const l of truncate(text, MAX_BLOCK_LINES)) push({ text: `│ ${l}`, color: "green", turn: turn.index });
-        }
-      }
-    } else {
-      push({ text: `┌─ turn ${turn.index + 1}  ${metaBits}`, color: "gray", dim: true });
-    }
-    for (const ev of turn.events) {
-      if (ev.kind === "compaction") {
-        push({
-          text: `│ ⚒ COMPACTION: ${(ev as { tokensBefore?: number }).tokensBefore?.toLocaleString() ?? "?"} tokens compacted → summary`,
-          color: "yellow",
-          bold: true,
-          turn: turn.index,
-        });
-        push({ text: `│   ${String(ev.summary ?? "").replace(/\n/g, " ").slice(0, 220)}`, color: "yellow", dim: true, turn: turn.index });
-      } else if (ev.kind === "model_change") {
-        push({ text: `│ ⚙ model → ${ev.detail}`, color: "magenta", dim: true, turn: turn.index });
-      } else if (ev.kind === "thinking_level_change") {
-        push({ text: `│ 🧠 thinking → ${ev.detail}`, color: "magenta", dim: true, turn: turn.index });
-      } else if (ev.kind === "custom") {
-        push({ text: `│ ◈ ${ev.detail}`, color: "gray", dim: true, turn: turn.index });
-      }
-    }
-    for (const call of turn.assistantCalls) {
-      const u = call.usage;
-      const usage =
-        u && (u.input > 0 || u.output > 0)
-          ? `[in ${formatTokens(u.input)} · cache ${formatTokens(u.cacheRead)} · out ${formatTokens(u.output)}]`
-          : "";
-      push({ text: `│   ${usage}`, color: "gray", dim: true, turn: turn.index });
-      for (const block of call.blocks) {
-        if (block.kind === "thinking") {
-          if (showThinking) {
-            for (const l of truncate(block.text ?? "", 200)) push({ text: `│     ${l}`, color: "gray", dim: true, turn: turn.index });
-          } else {
-            push({ text: "│     [thinking …]", color: "gray", dim: true, turn: turn.index });
-          }
-        } else if (block.kind === "tool_use") {
-          push({ text: `│     ${blockText(block)}`, color: "cyan", turn: turn.index });
-        } else if (block.kind === "text" && block.text?.trim()) {
-          for (const l of truncate(block.text, MAX_BLOCK_LINES)) push({ text: `│   ${l}`, color: "white", turn: turn.index });
-        }
-      }
-    }
-    for (const tr of turn.toolResults) {
-      const text = tr.blocks.map((b) => blockText(b)).filter(Boolean).join("\n");
-      if (!text.trim()) continue;
-      const first = text.split("\n")[0] ?? "";
-      push({ text: `│   ↩ ${tr.toolName ?? "tool"}${tr.isError ? " (error)" : ""}`, color: "cyan", dim: true, turn: turn.index });
-      for (const l of truncate(text, MAX_TOOL_RESULT_LINES)) push({ text: `│     ${l}`, color: "gray", dim: true, turn: turn.index });
-    }
-    push({ text: `└─`, color: "gray", dim: true, turn: turn.index });
-  }
-  return lines;
+interface Line {
+  text: string;
+  color?: string;
+  dim?: boolean;
+  bold?: boolean;
+  indent?: number;
+  /** The block this line came from (for cursor navigation). */
+  blockIndex: number;
+  /** The turn this line belongs to. */
+  turnIndex: number;
+  /** Message index within turn. */
+  msgIndex: number;
+  /** Line type for keybinding routing. */
+  kind: "header" | "user" | "assistant" | "thinking" | "toolCall" | "toolResult" | "event" | "cursor";
 }
 
 export function SessionDetail({
   session,
-  pi,
+  meta,
   onOpenContext,
-  onOpenSystemPrompt,
+  onOpenSysPrompt,
   onOpenFiles,
   onBack,
 }: {
-  session: SessionMeta;
-  pi?: AgentSession;
-  onOpenContext: (session: AgentSession) => void;
-  onOpenSystemPrompt: (session: AgentSession) => void;
-  onOpenFiles: (session: AgentSession) => void;
+  session: AgentSession;
+  meta: SessionMeta;
+  onOpenContext: () => void;
+  onOpenSysPrompt: () => void;
+  onOpenFiles: () => void;
   onBack: () => void;
 }) {
+  const { width: columns, height: rows } = useTerminalDimensions();
   const [showThinking, setShowThinking] = useState(false);
+  // selected line index in lines[]
+  const [cursor, setCursor] = useState(0);
 
-  // Session parsing is synchronous; use the cached PiSession from the App when
-  // available (large sessions parsed once), otherwise parse here.
-  const loaded = useMemo(() => pi ?? loadSession(session), [pi, session]);
-  const lines = useMemo(() => (loaded ? buildLines(loaded, showThinking) : []), [loaded, showThinking]);
-  const sel = useSelection(lines.length);
-  const { rows } = useTerminalSize();
+  const lines: Line[] = useMemo(() => {
+    const result: Line[] = [];
+    let blockIdx = 0;
+    for (const turn of session.turns) {
+      // turn header
+      buildTurnHeader(result, turn, blockIdx);
+      blockIdx++;
 
-  ListKeyBindings({
-    move: sel.move,
-    onOpen: () => loaded && onOpenContext(loaded),
-    extra: (input, key) => {
-      if (input === "q" || key.escape) onBack();
-      else if (input === "s") loaded && onOpenSystemPrompt(loaded);
-      else if (input === "f") loaded && onOpenFiles(loaded);
-      else if (input === "c" || input === "v") loaded && onOpenContext(loaded);
-      else if (input === "t") setShowThinking((v) => !v);
-    },
+      // user message
+      if (turn.userMessage) {
+        appendMessageLines(result, turn.userMessage, blockIdx, turn.index, -1, "header");
+        blockIdx++;
+      }
+
+      // assistant calls + events
+      for (let ai = 0; ai < turn.assistantCalls.length; ai++) {
+        const call = turn.assistantCalls[ai];
+        if (!call) continue;
+
+        // usage line
+        const input = call.usage?.input ?? 0;
+        const output = call.usage?.output ?? 0;
+        const cache = call.usage?.cacheRead ?? 0;
+        const cacheW = call.usage?.cacheWrite ?? 0;
+        const usageLine = cacheW > 0
+          ? `  [in ${fmt(input)} · cache ${fmt(cache)} · cacheW ${fmt(cacheW)} · out ${fmt(output)}]`
+          : `  [in ${fmt(input)} · cache ${fmt(cache)} · out ${fmt(output)}]`;
+        result.push({ text: usageLine, color: "gray", dim: true, blockIndex: blockIdx, turnIndex: turn.index, msgIndex: ai, kind: "header" });
+        blockIdx++;
+
+        // blocking: reasoning (thinking)
+        for (const b of call.blocks) {
+          if (b.kind === "thinking" || b.kind === "reasoning") {
+            const txt = (b.text ?? "").slice(0, MAX_BLOCK_LINES);
+            const thinker = showThinking ? txt : `  [thinking ${txt.slice(0, 60)}${txt.length > 60 ? "…" : ""}]`;
+            result.push({ text: thinker, color: "yellow", dim: !showThinking, blockIndex: blockIdx, turnIndex: turn.index, msgIndex: ai, kind: "thinking" });
+            blockIdx++;
+          }
+        }
+
+        // text reply
+        for (const b of call.blocks) {
+          if (b.kind === "text") {
+            const txt = (b.text ?? "").slice(0, MAX_BLOCK_LINES);
+            for (const line of txt.split("\n")) {
+              result.push({ text: line, color: "white", blockIndex: blockIdx, turnIndex: turn.index, msgIndex: ai, kind: "assistant" });
+              blockIdx++;
+            }
+          }
+        }
+
+        // tool calls in the assistant blocks
+        for (const b of call.blocks) {
+          if (b.kind === "tool_use") {
+            const inputPreview = b.input ? JSON.stringify(b.input).slice(0, 120) : "";
+            result.push({ text: `  ⛭ ${b.toolName ?? "tool"}(${inputPreview})`, color: "cyan", dim: true, blockIndex: blockIdx, turnIndex: turn.index, msgIndex: ai, kind: "toolCall" });
+            blockIdx++;
+          }
+        }
+      }
+
+      // tool results
+      for (const tr of turn.toolResults) {
+        const txt = tr.blocks.map((b) => b.text ?? "").join("\n").slice(0, MAX_TOOL_RESULT_LINES * 80);
+        const lines = txt.split("\n").slice(0, MAX_TOOL_RESULT_LINES);
+        for (const l of lines) {
+          result.push({ text: `  ↩ ${tr.toolName ?? "tool"}: ${l.slice(0, 120)}`, color: "gray", dim: true, blockIndex: blockIdx, turnIndex: turn.index, msgIndex: -1, kind: "toolResult" });
+          blockIdx++;
+        }
+        if (txt.split("\n").length > MAX_TOOL_RESULT_LINES) {
+          result.push({ text: `  … (${txt.split("\n").length - MAX_TOOL_RESULT_LINES} more lines)`, color: "gray", dim: true, blockIndex: blockIdx, turnIndex: turn.index, msgIndex: -1, kind: "toolResult" });
+          blockIdx++;
+        }
+      }
+
+      // events
+      for (const e of turn.events) {
+        buildEventLine(result, e, blockIdx, turn.index);
+        blockIdx++;
+      }
+
+      // closing line
+      result.push({ text: "  └─", color: "gray", dim: true, blockIndex: blockIdx, turnIndex: turn.index, msgIndex: -1, kind: "event" });
+      blockIdx++;
+    }
+    return result;
+  }, [session, showThinking]);
+
+  // clamp cursor
+  const safeCursor = Math.min(cursor, Math.max(0, lines.length - 1));
+  const cursorLine = lines[safeCursor];
+
+  useKeyboard((key) => {
+    if (key.name === "down" || key.name === "j") setCursor((c) => Math.min(c + 1, Math.max(0, lines.length - 1)));
+    else if (key.name === "up" || key.name === "k") setCursor((c) => Math.max(0, c - 1));
+    else if (key.name === "pageDown") setCursor((c) => Math.min(c + 10, Math.max(0, lines.length - 1)));
+    else if (key.name === "pageUp") setCursor((c) => Math.max(0, c - 10));
+    else if (key.name === "home") setCursor(0);
+    else if (key.name === "end") setCursor(Math.max(0, lines.length - 1));
+    else if (key.name === "t") setShowThinking((s) => !s);
+    else if (key.name === "c") onOpenContext();
+    else if (key.name === "s") onOpenSysPrompt();
+    else if (key.name === "f") onOpenFiles();
+    else if (key.name === "q" || key.name === "escape") onBack();
   });
 
+  // window into lines
+  const half = Math.max(1, Math.floor((rows - 5) / 2));
+  const start = Math.max(0, Math.min(safeCursor - half, Math.max(0, lines.length - (rows - 5))));
+  const visible = lines.slice(start, start + rows - 5);
+  const subtitle = `${meta.name ?? meta.id.slice(0, 8)}  ${meta.cwd || meta.project} · ${session.turns.length} turns · ${session.assistantCalls.length} LLM requests · ${lines.length} lines`;
+
   return (
-    <Box flexDirection="column">
-      <Header
-        title={session.name ?? session.id.slice(0, 8)}
-        subtitle={`${session.cwd} · ${session.startedAt} · ${session.messageCount} msgs`}
-      />
-      <ScrollableLines lines={lines} selected={sel.selected} topOffset={3} bottomOffset={1} />
-      <Box paddingLeft={1} paddingTop={1}>
-        <KeyHint
-          keys={[
-            ["j/k", "scroll"],
-            ["c", "context"],
-            ["s", "system prompt"],
-            ["f", "files"],
-            ["t", showThinking ? "hide thinking" : "show thinking"],
-            ["q", "back"],
-          ]}
-        />
-      </Box>
-    </Box>
+    <box flexDirection="column" width="100%" height={rows}>
+      <Header title={meta.name ?? meta.id.slice(0, 8)} subtitle={subtitle} />
+      <box flexDirection="column" flexGrow={1}>
+        {visible.map((line, i) => {
+          const absIdx = start + i;
+          const isCursor = absIdx === safeCursor;
+          return (
+            <text
+              key={absIdx}
+              fg={line.color}
+              attributes={
+                ((line.bold || isCursor) ? TextAttributes.BOLD : 0) |
+                (line.dim ? TextAttributes.DIM : 0)
+              }
+            >
+              {isCursor ? "▶ " : "  "}{line.text}
+            </text>
+          );
+        })}
+      </box>
+      <KeyHint keys={[
+        ["scroll", "j/k"],
+        ["context", "c"],
+        ["system prompt", "s"],
+        ["files", "f"],
+        ["show thinking", "t"],
+        ["back", "q"],
+      ]} />
+    </box>
   );
 }
 
-/** Virtualized line renderer with a selection cursor. */
-function ScrollableLines({ lines, selected, topOffset, bottomOffset }: { lines: Line[]; selected: number; topOffset: number; bottomOffset: number }) {
-  const { rows } = useTerminalSize();
-  const viewport = Math.max(1, rows - topOffset - bottomOffset - 1);
-  const count = lines.length;
-  const safe = Math.min(Math.max(0, selected), Math.max(0, count - 1));
-  const start = Math.max(0, Math.min(safe - Math.floor(viewport / 2), Math.max(0, count - viewport)));
-  const visible = lines.slice(start, start + viewport);
-  return (
-    <Box flexDirection="column">
-      {visible.map((l, i) => (
-        <Text key={start + i} color={l.color ?? "white"} bold={l.bold} dimColor={l.dim} wrap="truncate-end">
-          {start + i === safe ? "▶ " : "  "}
-          {l.text}
-        </Text>
-      ))}
-    </Box>
-  );
+function fmt(n: number): string {
+  return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n);
+}
+
+function buildTurnHeader(out: Line[], turn: Turn, blockIndex: number) {
+  const model = turn.model ?? "—";
+  const mode = turn.thinkingLevel ? `· think:${turn.thinkingLevel}` : "";
+  const reqs = turn.assistantCalls.length;
+  const ctx = turn.usage.input + turn.usage.cacheRead;
+  const line = `┌─ turn ${turn.index} ${model} ${mode} · ${reqs} req${reqs !== 1 ? "s" : ""} · ctx ${fmt(ctx)}`;
+  out.push({ text: line, color: "cyan", bold: true, blockIndex, turnIndex: turn.index, msgIndex: -1, kind: "header" });
+}
+
+function appendMessageLines(out: Line[], msg: NormalizedMessage, blockIndex: number, turnIdx: number, msgIdx: number, kind: Line["kind"]) {
+  const txt = msg.blocks
+    .filter((b) => b.kind === "text")
+    .map((b) => b.text ?? "")
+    .join("\n")
+    .trim();
+  const lines = txt.split("\n").slice(0, MAX_BLOCK_LINES);
+  for (const l of lines) {
+    out.push({
+      text: l.slice(0, 600),
+      color: msg.role === "user" ? "green" : "white",
+      dim: msg.role !== "user",
+      blockIndex,
+      turnIndex: turnIdx,
+      msgIndex: msgIdx,
+      kind,
+    });
+  }
+}
+
+function buildEventLine(out: Line[], e: SessionEventView, blockIndex: number, turnIndex: number) {
+  const prefix = e.kind === "compaction" ? "╒" : "◈";
+  const color = e.kind === "compaction" ? "yellow" : "gray";
+  const t = e.kind === "compaction" ? `╒ COMPACTION: ${e.detail?.slice(0, 160) ?? ""}` : `◈ ${e.detail?.slice(0, 160) ?? ""}`;
+  out.push({ text: t, color, dim: true, blockIndex, turnIndex, msgIndex: -1, kind: "event" });
 }

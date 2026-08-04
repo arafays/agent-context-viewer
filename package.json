@@ -15,7 +15,8 @@
     "extract-tool-snippets": "bun run scripts/extract-tool-snippets.ts"
   },
   "dependencies": {
-    "ink": "^7.1.1",
+    "@opentui/core": "^0.5.1",
+    "@opentui/react": "^0.5.1",
     "react": "^19.2.8"
   },
   "devDependencies": {

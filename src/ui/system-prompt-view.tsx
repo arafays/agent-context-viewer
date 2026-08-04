@@ -1,14 +1,19 @@
-/**
- * System Prompt view — the reconstructed system prompt for a session,
- * with the AGENTS.md/CLAUDE.md files and skills that were injected.
- */
-import React, { useEffect, useMemo, useState } from "react";
-import { Box, Text } from "ink";
-import { Header, KeyHint, ListKeyBindings, Spinner, useSelection, useTerminalSize } from "./components.tsx";
-import type { AgentSession } from "../adapters/types.ts";
+import { TextAttributes } from "@opentui/core"
+import { useKeyboard, useTerminalDimensions } from "@opentui/react"
+import { useMemo, useState } from "react"
+import { Header, KeyHint } from "./components.tsx"
+import type { AgentSession } from "../adapters/types.ts"
 
-export function SystemPromptView({ session, onBack }: { session: AgentSession; onBack: () => void }) {
-  const info = useMemo(() => session.contextInfo, [session]);
+export function SystemPromptView({
+  session,
+  onBack,
+}: {
+  session: AgentSession;
+  onBack: () => void;
+}) {
+  const { width: columns, height: rows } = useTerminalDimensions();
+  const [scroll, setScroll] = useState(0);
+  const info = session.contextInfo;
 
   const lines = useMemo(() => {
     const l: string[] = [];
@@ -22,50 +27,27 @@ export function SystemPromptView({ session, onBack }: { session: AgentSession; o
     return l;
   }, [info]);
 
-  const sel = useSelection(lines.length);
-  const { rows } = useTerminalSize();
-  ListKeyBindings({ move: sel.move, onOpen: () => {}, extra: (input, key) => (input === "q" || key.escape) && onBack() });
+  useKeyboard((key) => {
+    if (key.name === "down" || key.name === "j") setScroll((s) => Math.min(s + 1, Math.max(0, lines.length - 1)));
+    else if (key.name === "up" || key.name === "k") setScroll((s) => Math.max(0, s - 1));
+    else if (key.name === "pageDown") setScroll((s) => Math.min(s + 10, Math.max(0, lines.length - 1)));
+    else if (key.name === "pageUp") setScroll((s) => Math.max(0, s - 10));
+    else if (key.name === "home") setScroll(0);
+    else if (key.name === "end") setScroll(Math.max(0, lines.length - 1));
+    else if (key.name === "q" || key.name === "escape") onBack();
+  });
+
+  const visible = lines.slice(scroll, scroll + rows - 5);
 
   return (
-    <Box flexDirection="column">
-      <Header
-        title={`System prompt — ${session.meta.id.slice(0, 8)}`}
-        subtitle={`${session.meta.cwd} · ${info.reconstructed ? "reconstructed" : "exact (inline)"}`}
-      />
-      <ScrollableText lines={lines} selected={sel.selected} topOffset={3} bottomOffset={1} />
-      <Box paddingLeft={1} paddingTop={1}>
-        <KeyHint keys={[["j/k", "scroll"], ["q", "back"]]} />
-      </Box>
-    </Box>
-  );
-}
-
-/** Simple virtualized text scroller. */
-export function ScrollableText({
-  lines,
-  selected,
-  topOffset,
-  bottomOffset,
-}: {
-  lines: string[];
-  selected: number;
-  topOffset: number;
-  bottomOffset: number;
-}) {
-  const { rows } = useTerminalSize();
-  const viewport = Math.max(1, rows - topOffset - bottomOffset - 1);
-  const count = lines.length;
-  const safe = Math.min(Math.max(0, selected), Math.max(0, count - 1));
-  const start = Math.max(0, Math.min(safe - Math.floor(viewport / 2), Math.max(0, count - viewport)));
-  const visible = lines.slice(start, start + viewport);
-  return (
-    <Box flexDirection="column">
-      {visible.map((l, i) => (
-        <Text key={start + i} wrap="truncate-end">
-          {start + i === safe ? "▶ " : "  "}
-          {l}
-        </Text>
-      ))}
-    </Box>
+    <box flexDirection="column" width="100%" height={rows}>
+      <Header title="System prompt" subtitle={`${session.meta.id.slice(0, 8)}  ${info.reconstructed ? "reconstructed" : "exact"} · ${lines.length} lines`} />
+      <box flexDirection="column" flexGrow={1}>
+        {visible.map((l, i) => (
+          <text key={i}>{l}</text>
+        ))}
+      </box>
+      <KeyHint keys={[["scroll", "j/k"], ["back", "q"]]} />
+    </box>
   );
 }

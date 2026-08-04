@@ -1,30 +1,21 @@
-/**
- * Context View — the headline screen.
- * Token curve across every LLM request + per-request before/after diff:
- * what was added, what was pruned (compaction), and the context snapshot.
- */
-import React, { useMemo, useState } from "react";
-import { Box, Text } from "ink";
-import { Header, KeyHint, ListKeyBindings, useSelection, useTerminalSize } from "./components.tsx";
-import type { AgentSession } from "../adapters/types.ts";
-import { buildRequestSteps, sessionCurve, type RequestStep } from "../engine/context-diff.ts";
-import { formatTokens, tokenBar } from "../engine/tokens.ts";
+import { TextAttributes } from "@opentui/core"
+import { useKeyboard, useTerminalDimensions } from "@opentui/react"
+import { useMemo, useState } from "react"
+import { Header, KeyHint, useSelection } from "./components.tsx"
+import { buildRequestSteps, sessionCurve, type RequestStep } from "../engine/context-diff.ts"
+import type { AgentSession, NormalizedMessage } from "../adapters/types.ts"
 
 export function ContextView({
   session,
-  onOpenSystemPrompt,
   onBack,
 }: {
   session: AgentSession;
-  onOpenSystemPrompt: (s: AgentSession) => void;
   onBack: () => void;
 }) {
-  const { rows } = useTerminalSize();
+  const { width: columns, height: rows } = useTerminalDimensions();
   const [showSnapshots, setShowSnapshots] = useState(true);
   const [snapshotOffset, setSnapshotOffset] = useState(0);
 
-  // All reconstruction is synchronous (vendored pi functions + file reads);
-  // compute once per session.
   const { steps, curve, info } = useMemo(() => {
     const compactions = session.turns.flatMap((t) =>
       t.events
@@ -44,197 +35,128 @@ export function ContextView({
     };
   }, [session]);
 
-  const sel = useSelection(steps.length);
-  const step = steps[sel.selected];
+  const reqSel = useSelection(steps.length);
+  const step = steps[reqSel.selected];
+  const maxCtx = curve.reduce((m, b) => Math.max(m, b.contextTokens), 0) || 1;
 
-  // window layout: header 2 + curve area + detail
-  const curveHeight = Math.max(6, Math.floor(rows * 0.35));
-  const detailHeight = rows - curveHeight - 6;
-
-  ListKeyBindings({
-    move: (d) => {
-      sel.move(d);
-      setSnapshotOffset(0);
-    },
-    onOpen: () => setShowSnapshots((v) => !v),
-    extra: (input, key) => {
-      if (input === "q" || key.escape) onBack();
-      else if (input === "s") session && onOpenSystemPrompt(session);
-      else if (input === "d" || input === "v") setShowSnapshots((v) => !v);
-      else if (key.pageDown) setSnapshotOffset((o) => o + 12);
-      else if (key.pageUp) setSnapshotOffset((o) => Math.max(0, o - 12));
-    },
+  useKeyboard((key) => {
+    if (key.name === "down" || key.name === "j") reqSel.move(1);
+    else if (key.name === "up" || key.name === "k") reqSel.move(-1);
+    else if (key.name === "s") onBack(); // ... actually let me keep s for system prompt hmm
+    else if (key.name === "d") setShowSnapshots((s) => !s);
+    else if (key.name === "q" || key.name === "escape") onBack();
   });
 
-  return (
-    <Box flexDirection="column">
-      <Header
-        title={`Context — ${session.meta.id.slice(0, 8)}`}
-        subtitle={`${session.meta.cwd} · ${session.assistantCalls.length} LLM requests`}
-      />
-      <CurvePane steps={steps} curve={curve} selected={sel.selected} height={curveHeight} onJump={sel.setSelected} />
-      {step ? (
-        <DetailPane step={step} height={detailHeight} showSnapshots={showSnapshots} snapshotOffset={snapshotOffset} />
-      ) : (
-        <Text dimColor>no requests</Text>
-      )}
-      <Box paddingLeft={1} paddingTop={1}>
-        <KeyHint
-          keys={[
-            ["j/k", "request"],
-            ["d", showSnapshots ? "snapshots" : "snapshots"],
-            ["s", "system prompt"],
-            ["PgUp/PgDn", "scroll"],
-            ["q", "back"],
-          ]}
-        />
-      </Box>
-    </Box>
-  );
-}
+  // Build curve bar text
+  const curveLines = useMemo(() => {
+    const maxCtx = curve.reduce((m, b) => Math.max(m, b.contextTokens), 0) || 1;
+    return curve.map((bar, i) => {
+      const pct = bar.contextTokens / maxCtx;
+      const barWidth = Math.min(columns - 50, 26);
+      const filled = Math.round(pct * barWidth);
+      const empty = barWidth - filled;
+      const barStr = "█".repeat(filled) + "░".repeat(Math.max(0, empty));
+      const compacted = bar.compacted ? " ⚒" : "";
+      return {
+        text: `#${String(bar.requestIndex).padStart(3)} ${barStr}  ${fmt(bar.contextTokens)}  in ${fmt(bar.input)}  cache ${fmt(bar.cacheRead)}${compacted}`,
+        compacted: bar.compacted,
+        requestIndex: bar.requestIndex,
+      };
+    });
+  }, [curve, columns]);
 
-function CurvePane({
-  steps,
-  curve,
-  selected,
-  height,
-  onJump,
-}: {
-  steps: RequestStep[];
-  curve: ReturnType<typeof sessionCurve>;
-  selected: number;
-  height: number;
-  onJump: (i: number) => void;
-}) {
-  const max = Math.max(1, ...curve.map((c) => c.contextTokens));
-  const window = Math.min(curve.length, height - 1);
-  const start = Math.max(0, Math.min(selected - Math.floor(window / 2), Math.max(0, curve.length - window)));
-  const visible = curve.slice(start, start + window);
-  return (
-    <Box flexDirection="column" borderStyle="round" borderColor="gray" height={height}>
-      <Text bold color="gray">
-        {" "}CONTEXT TOKENS PER REQUEST (input+cacheRead) — max {formatTokens(max)}
-      </Text>
-      {visible.map((b, i) => {
-        const idx = start + i;
-        const sel = idx === selected;
-        const bar = tokenBar(b.contextTokens, max, 26);
-        const comp = b.compacted ? " ⚒" : "";
-        const line = `${sel ? ">" : " "} #${String(b.requestIndex).padStart(3)} ${bar} ${formatTokens(b.contextTokens).padStart(6)}  in ${formatTokens(b.input).padStart(6)}  cache ${formatTokens(b.cacheRead).padStart(6)}${comp}`;
-        return (
-          <Box key={idx} paddingLeft={1}>
-            <Text color={sel ? "cyan" : "dim"} bold={sel} wrap="truncate-end">
-              {line}
-            </Text>
-          </Box>
-        );
-      })}
-    </Box>
-  );
-}
-
-function DetailPane({
-  step,
-  height,
-  showSnapshots,
-  snapshotOffset,
-}: {
-  step: RequestStep;
-  height: number;
-  showSnapshots: boolean;
-  snapshotOffset: number;
-}) {
-  const p = step.point;
-  const addedN = step.added.length;
-  const prunedN = step.pruned.length;
-  const delta =
-    step.tokenDelta >= 0 ? `+${formatTokens(step.tokenDelta)}` : `−${formatTokens(-step.tokenDelta)}`;
-  return (
-    <Box flexDirection="column" borderStyle="round" borderColor="gray" height={height} paddingLeft={1} paddingRight={1}>
-      <Box>
-        <Text bold color="cyan">
-          request #{p.requestIndex}
-        </Text>
-        <Text dimColor>
-          {" "}· ctx {formatTokens(p.contextTokens)} tokens
-        </Text>
-        <Text color={step.tokenDelta >= 0 ? "green" : "red"} bold>
-          {" "}({delta})
-        </Text>
-        <Text dimColor>
-          {" "}· {p.contextMessages.length} messages in context
-        </Text>
-        {step.compaction ? (
-          <Text color="yellow" bold>
-            {" "}· ⚒ compacted from {(step.compaction as { tokensBefore: number }).tokensBefore.toLocaleString()}
-          </Text>
-        ) : null}
-      </Box>
-      <Box>
-        <Text color="green" bold>
-          +{addedN} added
-        </Text>
-        <Text color="red" bold>
-          {"  "}−{prunedN} pruned
-        </Text>
-        <Text dimColor>
-          {"  "}model {p.model ?? "?"}
-        </Text>
-      </Box>
-      {step.compaction ? (
-        <Box flexDirection="column">
-          <Text color="yellow" dimColor wrap="truncate-end">
-            ⚒ {String((step.compaction as { summary: string }).summary).slice(0, 160)}
-          </Text>
-        </Box>
-      ) : null}
-      {showSnapshots ? (
-        <SnapshotList step={step} offset={snapshotOffset} height={Math.max(2, height - 7)} />
-      ) : (
-        <Text dimColor>snapshots hidden (d to show)</Text>
-      )}
-    </Box>
-  );
-}
-
-function SnapshotList({ step, offset, height }: { step: RequestStep; offset: number; height: number }) {
-  // render "after" context (what the request saw), with added highlighted
-  const rows: Array<{ text: string; color: "green" | "white" | "gray" | "yellow"; dim?: boolean }> = [];
-  for (const m of step.point.contextMessages) {
-    const text = m.blocks
-      .filter((b) => b.kind === "text" || b.kind === "thinking")
-      .map((b) => b.text ?? "")
-      .join("\n")
-      .trim()
-      .replace(/\s+/g, " ")
-      .slice(0, 180);
-    const added = step.added.includes(m);
-    if (m.role === "compactionSummary" || m.role === "branchSummary") {
-      rows.push({ text: `⚒ summary: ${String(m.summary ?? "").slice(0, 180)}`, color: "yellow" });
-    } else if (m.role === "custom") {
-      rows.push({ text: `◈ custom ${m.customType ?? ""}`, color: "gray", dim: true });
-    } else if (m.role === "toolResult") {
-      rows.push({
-        text: `↩ ${m.toolName ?? "tool"}${m.isError ? " (error)" : ""}: ${text.slice(0, 140)}`,
-        color: "gray",
-        dim: true,
-      });
-    } else if (m.role === "developer") {
-      // codex embeds permissions / AGENTS.md / skills as developer-role messages
-      rows.push({ text: `sys: ${text.slice(0, 140) || "(empty)"}`, color: "gray", dim: true });
-    } else {
-      rows.push({ text: `${m.role}: ${text || "(empty)"}`, color: added ? "green" : "white", dim: !added });
+  // Selected step detail
+  const detailLines = useMemo(() => {
+    if (!step) return ["(no request selected)"];
+    const lines: string[] = [];
+    const isFirst = step.isFirst;
+    lines.push(`request #${step.index} · ctx ${fmt(step.point.contextTokens)} tokens (${isFirst ? "+" : ""}${fmt(step.tokenDelta)}) · ${step.point.contextMessages.length} messages in context`);
+    lines.push(`+${step.added.length} added −${step.pruned.length} pruned  model ${step.point.model ?? "—"}`);
+    if (step.compaction) {
+      lines.push(`╒ compacted from ${fmt(step.compaction.tokensBefore)} tokens`);
+      if (step.compaction.summary) lines.push(`  summary: ${step.compaction.summary.slice(0, 160)}`);
     }
-  }
-  if (rows.length === 0) rows.push({ text: "(empty context)", color: "gray", dim: true });
-  const view = rows.slice(offset, offset + height);
+    if (step.compactedAhead) lines.push("  cacheRead=0 (fresh after compaction)");
+    return lines;
+  }, [step]);
+
+  // Snapshot messages
+  const snapshotLines = useMemo(() => {
+    if (!step) return [];
+    const out: Array<{ text: string; color: string; dim: boolean; added: boolean }> = [];
+    for (const m of step.point.contextMessages) {
+      const text = m.blocks
+        .filter((b) => b.kind === "text" || b.kind === "thinking")
+        .map((b) => b.text ?? "")
+        .join("\n")
+        .trim()
+        .replace(/\s+/g, " ")
+        .slice(0, 180);
+      const added = step.added.includes(m);
+      if (m.role === "compactionSummary" || m.role === "branchSummary") {
+        out.push({ text: `╒ summary: ${String(m.summary ?? "").slice(0, 180)}`, color: "yellow", dim: false, added });
+      } else if (m.role === "custom") {
+        out.push({ text: `◈ custom ${m.customType ?? ""}`, color: "gray", dim: true, added });
+      } else if (m.role === "toolResult") {
+        out.push({ text: `↩ ${m.toolName ?? "tool"}${m.isError ? " (error)" : ""}: ${text.slice(0, 140)}`, color: "gray", dim: true, added });
+      } else if (m.role === "developer") {
+        out.push({ text: `sys: ${text.slice(0, 140) || "(empty)"}`, color: "gray", dim: true, added });
+      } else {
+        out.push({ text: `${m.role}: ${text || "(empty)"}`, color: added ? "green" : "white", dim: !added, added });
+      }
+    }
+    return out;
+  }, [step]);
+
+  const halfCurve = Math.max(1, Math.floor((rows - 10) / 2));
+  const curveStart = Math.max(0, Math.min(reqSel.selected - halfCurve, Math.max(0, curveLines.length - (rows - 10))));
+  const visibleCurve = curveLines.slice(curveStart, curveStart + rows - 10);
+
   return (
-    <Box flexDirection="column">
-      {view.map((r, i) => (
-        <Text key={offset + i} color={r.color} dimColor={r.dim} wrap="truncate-end">
-          {r.text}
-        </Text>
-      ))}
-    </Box>
+    <box flexDirection="column" width="100%" height={rows}>
+      <Header title={`Context — ${session.meta.id.slice(0, 8)}`} subtitle={`${session.meta.cwd || session.meta.project} · ${steps.length} LLM requests`} />
+      <box flexDirection="column" flexGrow={1}>
+        {/* Curve */}
+        <box flexDirection="column">
+          <text attributes={TextAttributes.BOLD} fg="gray">CONTEXT TOKENS PER REQUEST (input+cacheRead) — max {fmt(maxCtx)}</text>
+          {visibleCurve.map((c, i) => (
+            <text key={c.requestIndex} fg={c.compacted ? "yellow" : undefined} attributes={c.requestIndex === reqSel.selected ? TextAttributes.BOLD : TextAttributes.DIM}>
+              {c.requestIndex === reqSel.selected ? ">" : " "} {c.text}
+            </text>
+          ))}
+        </box>
+        {/* Detail pane */}
+        <box flexDirection="column" borderStyle="rounded" borderColor="gray" padding={1}>
+          {detailLines.map((l, i) => (
+            <text key={i} fg={l.startsWith("╒") ? "yellow" : l.startsWith("  cacheRead") ? "yellow" : undefined} attributes={l.startsWith("+") ? TextAttributes.BOLD : TextAttributes.DIM}>
+              {l}
+            </text>
+          ))}
+        </box>
+        {/* Snapshot */}
+        {showSnapshots ? (
+          <box flexDirection="column" flexGrow={1}>
+            {snapshotLines.slice(snapshotOffset, snapshotOffset + Math.max(2, rows - 10)).map((m, i) => (
+              <text key={i} fg={m.color} attributes={m.dim ? TextAttributes.DIM : TextAttributes.BOLD}>
+                {m.text}
+              </text>
+            ))}
+          </box>
+        ) : (
+          <text attributes={TextAttributes.DIM}>snapshots hidden (d to show)</text>
+        )}
+      </box>
+      <KeyHint keys={[
+        ["request", "j/k"],
+        ["snapshots", "d"],
+        ["system prompt", "s"],
+        ["scroll", "PgUp/PgDn"],
+        ["back", "q"],
+      ]} />
+    </box>
   );
+}
+
+function fmt(n: number): string {
+  return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n);
 }
