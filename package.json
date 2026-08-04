@@ -8,8 +8,10 @@
   "bin": {
     "acv": "src/main.tsx"
   },
+  "files": ["src"],
   "scripts": {
     "start": "bun run src/main.tsx",
+    "build:release": "bun run scripts/build-release.ts",
     "dev": "bun --watch run src/main.tsx",
     "typecheck": "tsc --noEmit",
     "extract-tool-snippets": "bun run scripts/extract-tool-snippets.ts"

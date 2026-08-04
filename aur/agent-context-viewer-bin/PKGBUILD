@@ -1,0 +1,26 @@
+# Maintainer: ARafayS <arafays@users.noreply.github.com>
+# Template for the GitHub Actions release pipeline (.github/workflows/release.yml):
+#   - pkgver is sed-replaced with the git tag (v* stripped)
+#   - REPLACE_SHA_X64 / REPLACE_SHA_AARCH64 are replaced with real sha256sums
+# The action (KSXGitHub/github-actions-deploy-aur) regenerates .SRCINFO on push.
+pkgname=agent-context-viewer-bin
+pkgver=0.0.0
+pkgrel=1
+pkgdesc="TUI that shows how AI coding agents assemble context (Pi, Codex, Claude Code, opencode)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/arafays/agent-context-viewer"
+license=('MIT')
+depends=('glibc')
+options=('!strip')
+source_x86_64=("acv-linux-x64::https://github.com/arafays/agent-context-viewer/releases/download/v${pkgver}/acv-linux-x64")
+source_aarch64=("acv-linux-aarch64::https://github.com/arafays/agent-context-viewer/releases/download/v${pkgver}/acv-linux-aarch64")
+sha256sums_x86_64=('REPLACE_SHA_X64')
+sha256sums_aarch64=('REPLACE_SHA_AARCH64')
+
+package() {
+  case "$CARCH" in
+    x86_64)  _asset="acv-linux-x64" ;;
+    aarch64) _asset="acv-linux-aarch64" ;;
+  esac
+  install -Dm755 "$srcdir/$_asset" "$pkgdir/usr/bin/acv"
+}

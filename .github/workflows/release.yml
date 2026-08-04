@@ -1,0 +1,154 @@
+name: release
+
+# Cut a release by pushing a tag:  git tag v0.1.0 && git push origin v0.1.0
+#
+# Jobs:
+#   1. build   — compile standalone OpenTUI/Bun binaries for linux-x64 + linux-aarch64
+#   2. publish — attach the binaries + SHA256SUMS to a GitHub Release
+#   3. aur     — regenerate aur/agent-context-viewer-bin/PKGBUILD with the new
+#                version + checksums and push it to the AUR via
+#                KSXGitHub/github-actions-deploy-aur (which also generates .SRCINFO)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.asset }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: bun-linux-x64
+            asset: acv-linux-x64
+          - target: bun-linux-arm64
+            asset: acv-linux-aarch64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # OpenTUI ships os/cpu-gated native packages; installing all variants lets
+      # one x64 runner cross-compile the aarch64 binary (see OpenTUI docs,
+      # standalone-executables). bun.lock already records all variants.
+      - name: Install dependencies (all platform variants)
+        run: bun install --frozen-lockfile --os="*" --cpu="*"
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compile standalone binary
+        env:
+          ACV_VERSION: ${{ steps.ver.outputs.version }}
+          BUN_TARGET: ${{ matrix.target }}
+          ASSET: ${{ matrix.asset }}
+        run: bun run build:release
+
+      # Cross-compiled aarch64 can't run on the x64 runner; smoke the native one.
+      - name: Smoke test (native target only)
+        if: matrix.target == 'bun-linux-x64'
+        run: |
+          ./dist/acv-linux-x64 --version
+          ./dist/acv-linux-x64 --help >/dev/null
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        run: (cd dist && sha256sum acv-* > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      - name: Create / update release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/acv-linux-x64
+            dist/acv-linux-aarch64
+            dist/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            **Arch Linux (AUR):**
+            ```sh
+            paru -S agent-context-viewer-bin
+            ```
+
+            **Direct binary (Linux x86_64):**
+            ```sh
+            curl -fsSL -o acv https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/acv-linux-x64
+            chmod +x acv && sudo install -m755 acv /usr/local/bin/acv
+            ```
+
+            **Direct binary (Linux aarch64):** use `acv-linux-aarch64`.
+
+            Run `acv` in a terminal to launch the TUI (`acv --help` for usage).
+            Verify checksums with `sha256sum -c SHA256SUMS.txt`.
+
+  aur:
+    name: Publish AUR package
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "$GITHUB_REF_NAME" --pattern 'acv-linux-*' --dir /tmp/acv-assets
+
+      - name: Generate PKGBUILD
+        env:
+          PKGVER: ${{ steps.ver.outputs.version }}
+        run: |
+          SHA_X64=$(sha256sum /tmp/acv-assets/acv-linux-x64 | cut -d' ' -f1)
+          SHA_ARM64=$(sha256sum /tmp/acv-assets/acv-linux-aarch64 | cut -d' ' -f1)
+          sed -e "s/^pkgver=.*/pkgver=${PKGVER}/" \
+              -e "s/REPLACE_SHA_X64/${SHA_X64}/" \
+              -e "s/REPLACE_SHA_AARCH64/${SHA_ARM64}/" \
+              aur/agent-context-viewer-bin/PKGBUILD > /tmp/acv-PKGBUILD
+          cat /tmp/acv-PKGBUILD
+
+      - name: Publish to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v4.2.0
+        with:
+          pkgname: agent-context-viewer-bin
+          pkgbuild: /tmp/acv-PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: Update to v${{ steps.ver.outputs.version }}
+          ssh_keyscan_types: rsa,ecdsa,ed25519

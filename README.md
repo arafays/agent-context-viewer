@@ -104,6 +104,45 @@ The `acv` bin is defined in `package.json`:
 bun link && acv
 ```
 
+## Releases & AUR
+
+A standalone **`acv` binary** (Bun + OpenTUI compiled into a single file, no
+runtime needed) is published for **Linux x86_64 and aarch64** on every
+`v*` git tag via `.github/workflows/release.yml`:
+
+1. **build** — cross-compiles `dist/acv-linux-{x64,aarch64}`
+   (`scripts/build-release.ts`, `bun run build:release`) and smoke-tests the
+   native binary
+2. **publish** — attaches the binaries + `SHA256SUMS.txt` to a GitHub Release
+3. **aur** — regenerates `aur/agent-context-viewer-bin/PKGBUILD` with the new
+   version and sha256sums, then pushes it to
+   [AUR/agent-context-viewer-bin](https://aur.archlinux.org/packages/agent-context-viewer-bin)
+   via `KSXGitHub/github-actions-deploy-aur` (`.SRCINFO` is auto-generated)
+
+To cut a release:
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+Install on Arch:
+
+```sh
+paru -S agent-context-viewer-bin
+```
+
+Manual install (any glibc Linux):
+
+```sh
+curl -fsSL -o acv https://github.com/arafays/agent-context-viewer/releases/latest/download/acv-linux-x64
+chmod +x acv && sudo install -m755 acv /usr/local/bin/acv
+acv
+```
+
+The workflow needs three repo secrets: `AUR_SSH_PRIVATE_KEY` (ed25519 key
+whose public half is registered at <https://aur.archlinux.org/account/ARafayS> →
+SSH Keys), `AUR_USERNAME`, and `AUR_EMAIL`.
+
 ## How context is reconstructed
 
 Pi session files (`~/.pi/agent/sessions/<project-slug>/*.jsonl`) store every
@@ -166,7 +205,11 @@ scripts/
   all-tools-ui-test.tsx     drives the full UI across every available adapter
   render-test.tsx           headless snapshot of every screen
   render-loop-test.tsx      drives the full UI with fake stdin/stdout
+  build-release.ts          compiles standalone acv binaries (bun build --compile)
 ```
+
+Release pipeline: `.github/workflows/release.yml` (build → GitHub Release → AUR
+publish), with the PKGBUILD template at `aur/agent-context-viewer-bin/`.
 
 Adding an agent = implementing the adapter interface in `adapters/types.ts` and
 registering it in `registry.ts` — the renderer is shared.
