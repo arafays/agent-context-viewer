@@ -226,8 +226,11 @@ function blockView(b: CBlock): ContentBlockView | null {
     case "text":
       return { kind: "text", text: typeof b.text === "string" ? b.text : "" };
     case "thinking":
-    case "redacted_thinking":
       return { kind: "thinking", text: typeof b.thinking === "string" ? b.thinking : typeof b.text === "string" ? b.text : "" };
+    case "redacted_thinking":
+      // The raw payload is a redacted cipher blob under `data`; surface a visible
+      // placeholder so the transcript shows that thinking was redacted.
+      return { kind: "thinking", text: "[thinking redacted]" };
     case "tool_use":
       return { kind: "tool_use", toolName: typeof b.name === "string" ? b.name : "tool", toolCallId: typeof b.id === "string" ? b.id : undefined, input: b.input };
     case "tool_result": {
@@ -238,7 +241,7 @@ function blockView(b: CBlock): ContentBlockView | null {
         : typeof b.content === "string"
           ? b.content
           : "";
-      return { kind: "tool_result", toolCallId: typeof b.id === "string" ? b.id : undefined, text: inner, isError: b.is_error === true };
+      return { kind: "tool_result", toolCallId: typeof (b as { tool_use_id?: string }).tool_use_id === "string" ? (b as { tool_use_id?: string }).tool_use_id : typeof b.id === "string" ? b.id : undefined, text: inner, isError: b.is_error === true };
     }
     case "image":
       return { kind: "image", text: "[image]" };

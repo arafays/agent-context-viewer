@@ -28,7 +28,8 @@ const HELP_ROWS: Array<[string, string]> = [
   ["context files", "f"],
   ["show thinking", "t"],
   ["toggle snapshots", "d"],
-  ["back / quit", "q / Esc"],
+  ["back", "q / Esc"],
+  ["quit app", "Q (Shift+Q)"],
   ["help", "?"],
 ];
 
@@ -67,13 +68,18 @@ export function App() {
   };
 
   useKeyboard((key) => {
+    // Global hard quit — Shift+Q from anywhere destroys the app.
+    if (key.name === "q" && key.shift) {
+      renderer.destroy();
+      return;
+    }
     // Global help toggle
     if (key.name === "?" && !showHelp) {
       setShowHelp(true);
       return;
     }
     if (showHelp) {
-      if (key.name === "escape" || key.name === "q" || key.name === "return") {
+      if (key.name === "escape" || (key.name === "q" && !key.shift) || key.name === "return") {
         setShowHelp(false);
       }
       return;
@@ -160,10 +166,10 @@ export function App() {
   }, [screen, sessionsByTool, cache]);
 
   const helpPanel = showHelp ? (
-    <box position="absolute" width="100%" height="100%" backgroundColor="#111">
-      <box borderStyle="rounded" borderColor="#00FFFF" padding={1} flexDirection="column" width={50} style={{ marginTop: 2, marginLeft: 4 }}>
-        <text fg="#00FFFF" attributes={TextAttributes.BOLD}>Help</text>
-        <box flexDirection="column" gap={1}>
+    <box position="absolute" width="100%" height="100%" backgroundColor="#111" flexDirection="column" justifyContent="center" alignItems="center">
+      <box borderStyle="rounded" borderColor="#00FFFF" padding={1} flexDirection="column" width={54}>
+        <text fg="#00FFFF" attributes={TextAttributes.BOLD}> Help</text>
+        <box flexDirection="column" gap={1} padding={2}>
           {HELP_ROWS.map(([label, k]) => (
             <box key={label} flexDirection="row" gap={1}>
               <text attributes={TextAttributes.BOLD} fg="#FFFF00">{k.padEnd(25)}</text>

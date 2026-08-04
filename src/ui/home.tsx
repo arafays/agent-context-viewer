@@ -2,6 +2,7 @@ import { TextAttributes } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useMemo, useState } from "react"
 import { Header, KeyHint, useSelection } from "./components.tsx"
+import { tildeHome } from "./util.ts"
 import { TOOLS } from "../adapters/registry.ts"
 import type { AgentTool, SessionMeta } from "../adapters/types.ts"
 
@@ -49,11 +50,13 @@ export function Home({
   const [search, setSearch] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
-  const paneWidth = Math.floor((columns - 4) / 2);
+  // Border takes 2 chars (left+right). Padding takes 2 (1 each side).
+  const borderPad = 4;
+  const paneWidth = Math.floor(columns / 2);
   const toolPaneWidth = Math.max(20, Math.min(30, paneWidth));
-  const projPaneWidth = columns - toolPaneWidth - 4;
-  const toolContentWidth = toolPaneWidth - 4; // account for border + padding
-  const projContentWidth = projPaneWidth - 4;
+  const projPaneWidth = columns - toolPaneWidth;
+  const toolContentWidth = toolPaneWidth - borderPad;
+  const projContentWidth = projPaneWidth - borderPad;
 
   const selectTool = (d: number) => {
     toolSel.move(d);
@@ -93,7 +96,7 @@ export function Home({
       setSearch("");
       setQuery("");
     } else if (key.name === "q" || key.name === "escape") {
-      onQuit();
+      if (!key.shift) onQuit();
     }
   });
 
@@ -102,29 +105,35 @@ export function Home({
   const toolRows = tools.map((t, i) => {
     const sel = i === toolSel.selected;
     const n = sessionsByTool[t.id]?.length ?? 0;
+    const prefix = sel ? "▶ " : "  ";
     const label = `${t.name}${n > 0 ? ` ${n}` : " —"}`;
+    const full = prefix + label;
+    const truncated = full.length > toolContentWidth ? full.slice(0, toolContentWidth - 1) + "…" : full;
     return (
       <text
         key={t.id}
         attributes={sel ? TextAttributes.BOLD : TextAttributes.DIM}
         fg={sel ? "cyan" : undefined}
       >
-        {sel ? "▶ " : "  "}{label.length > toolContentWidth ? label.slice(0, toolContentWidth - 1) + "…" : label}
+        {truncated}
       </text>
     );
   });
 
   const projRows = groups.map((g, i) => {
     const sel = i === safeProjSel;
-    const label = `${g.project}  ${(g.totalTokens >= 1_000_000 ? `${(g.totalTokens / 1_000_000).toFixed(1)}M` : g.totalTokens >= 1_000 ? `${(g.totalTokens / 1_000).toFixed(1)}k` : g.totalTokens)} tokens · ${g.count} sessions`;
-    const truncated = label.length > projPaneWidth - 8 ? label.slice(0, projPaneWidth - 11) + "…" : label;
+    const prefix = sel ? "▶ " : "  ";
+    const tokens = g.totalTokens >= 1_000_000 ? `${(g.totalTokens / 1_000_000).toFixed(1)}M` : g.totalTokens >= 1_000 ? `${(g.totalTokens / 1_000).toFixed(1)}k` : String(g.totalTokens);
+    const label = `${tildeHome(g.project)}  ${tokens} · ${g.count}s`;
+    const full = prefix + label;
+    const truncated = full.length > projContentWidth ? full.slice(0, projContentWidth - 1) + "…" : full;
     return (
       <text
         key={g.project}
         attributes={sel ? TextAttributes.BOLD : TextAttributes.DIM}
         fg={sel ? "cyan" : undefined}
       >
-        {sel ? "▶ " : "  "}{truncated.length > projContentWidth ? truncated.slice(0, projContentWidth - 1) + "…" : truncated}
+        {truncated}
       </text>
     );
   });
@@ -145,7 +154,7 @@ export function Home({
           {projRows.length > 0 ? projRows : <text attributes={TextAttributes.DIM} fg="gray">(no sessions)</text>}
         </box>
       </box>
-      <KeyHint keys={[["move", "j/k"], ["search", "/"], ["open", "Enter"], ["tool", "Tab/g/G"], ["quit", "q"]]} />
+      <KeyHint keys={[["move", "j/k"], ["search", "/"], ["open", "Enter"], ["tool", "Tab/g/G"], ["back", "q"], ["quit app", "Q"]]} />
     </box>
   );
 }

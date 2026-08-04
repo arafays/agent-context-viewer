@@ -1,29 +1,58 @@
 import { TextAttributes } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useMemo, useState } from "react"
-import { Header, KeyHint, useSelection } from "./components.tsx"
+import { Header, KeyHint } from "./components.tsx"
+import { BlockReader, type ReaderContent } from "./reader.tsx"
+import { tildeHome, wordWrap } from "./util.ts"
 import type { AgentSession, ContentBlockView, NormalizedMessage, SessionEventView, SessionMeta, Turn } from "../adapters/types.ts"
 
-/** Max lines of tool-result body to show. */
-const MAX_TOOL_RESULT_LINES = 4;
-/** Max blocks rendered per message (overflow = "…N more lines"). */
-const MAX_BLOCK_LINES = 400;
+/** Max chars of a single message's text/thinking we materialise inline. */
+const MAX_BLOCK_CHARS = 4000;
+/** Raw tool-result lines shown inline before the "Enter to expand" hint. */
+const TOOL_RESULT_PREVIEW_LINES = 12;
+/** Soft cap on a tool result's full expanded body. */
+const TOOL_RESULT_FULL_CAP = 200_000;
+/** Indent (columns) for body lines under their tag header. */
+const BODY_INDENT = 2;
 
-interface Line {
+type Kind =
+  | "system" | "header" | "spacer" | "close"
+  | "user" | "assistant" | "thinking" | "usage"
+  | "toolUse" | "toolResult" | "hint"
+  | "compaction" | "model" | "thinkingLvl" | "custom" | "note";
+
+/** A logical (pre-wrap) transcript line. */
+interface LLine {
   text: string;
   color?: string;
   dim?: boolean;
   bold?: boolean;
+  kind: Kind;
+  turn: number;
+  /** true → this is a block header/tag line (bold label). */
+  isTag?: boolean;
+  /** indentation for body lines (columns), 0 for tag/spacer. */
   indent?: number;
-  /** The block this line came from (for cursor navigation). */
-  blockIndex: number;
-  /** The turn this line belongs to. */
-  turnIndex: number;
-  /** Message index within turn. */
-  msgIndex: number;
-  /** Line type for keybinding routing. */
-  kind: "header" | "user" | "assistant" | "thinking" | "toolCall" | "toolResult" | "event" | "cursor";
+  expand?: ReaderContent;
 }
+
+/** A rendered (wrapped) transcript line. */
+interface RLine extends LLine { cont: boolean }
+
+const C = {
+  system: "blue",
+  user: "green",
+  thinking: "yellow",
+  assistant: "white",
+  toolUse: "cyan",
+  toolResult: "gray",
+  toolError: "red",
+  compaction: "magenta",
+  model: "blue",
+  custom: "magenta",
+  note: "gray",
+  hint: "gray",
+};
 
 export function SessionDetail({
   session,
@@ -42,128 +71,182 @@ export function SessionDetail({
 }) {
   const { width: columns, height: rows } = useTerminalDimensions();
   const [showThinking, setShowThinking] = useState(false);
-  // selected line index in lines[]
-  const [cursor, setCursor] = useState(0);
+  const [anchorIdx, setAnchorIdx] = useState(0); // position within `anchors` (jump targets)
+  const [reader, setReader] = useState<ReaderContent | null>(null);
 
-  const lines: Line[] = useMemo(() => {
-    const result: Line[] = [];
-    let blockIdx = 0;
+  const llines: LLine[] = useMemo(() => {
+    const out: LLine[] = [];
+    const spacer = (turn: number) => out.push({ text: "", kind: "spacer", turn, indent: 0 });
+    // tag header for a block
+    const tag = (text: string, color: string, turn: number, kind: Kind, expand?: ReaderContent) =>
+      out.push({ text, color, bold: true, kind, turn, isTag: true, indent: 0, expand });
+    // one or more body lines (pre-wrap; wrapping happens later)
+    const body = (text: string, color: string, dim: boolean, turn: number, kind: Kind, expand?: ReaderContent) =>
+      out.push({ text, color, dim, kind, turn, indent: BODY_INDENT, expand });
+
+    // leading system prompt — first jump target, expandable in the reader
+    const sysPrompt = (session.contextInfo.systemPrompt ?? "").trim();
+    if (sysPrompt) {
+      const expand = { title: "system prompt", body: sysPrompt, color: C.system };
+      tag(`system prompt${session.contextInfo.reconstructed ? " · reconstructed" : ""} · ${fmt(sysPrompt.length)} chars`, C.system, -1, "system", expand);
+      spacer(-1);
+    }
+
     for (const turn of session.turns) {
       // turn header
-      buildTurnHeader(result, turn, blockIdx);
-      blockIdx++;
+      const model = turn.model ?? "—";
+      const mode = turn.thinkingLevel ? ` · think:${turn.thinkingLevel}` : "";
+      const reqs = turn.assistantCalls.length;
+      const ctx = turn.usage.input + turn.usage.cacheRead;
+      tag(`turn ${turn.index} · ${model}${mode} · ${reqs} req${reqs !== 1 ? "s" : ""} · ctx ${fmt(ctx)}`, "cyan", turn.index, "header");
 
-      // user message
-      if (turn.userMessage) {
-        appendMessageLines(result, turn.userMessage, blockIdx, turn.index, -1, "header");
-        blockIdx++;
+      // leading events
+      if (turn.events.length) {
+        for (const e of turn.events) buildEvent(out, e, turn.index, tag, body);
+        spacer(turn.index);
       }
 
-      // assistant calls + events
+      // user prompt
+      if (turn.userMessage) {
+        appendMessage(out, turn.userMessage, turn.index, tag, body);
+        spacer(turn.index);
+      }
+
       for (let ai = 0; ai < turn.assistantCalls.length; ai++) {
         const call = turn.assistantCalls[ai];
         if (!call) continue;
 
-        // usage line
+        // usage
         const input = call.usage?.input ?? 0;
         const output = call.usage?.output ?? 0;
         const cache = call.usage?.cacheRead ?? 0;
         const cacheW = call.usage?.cacheWrite ?? 0;
-        const usageLine = cacheW > 0
-          ? `  [in ${fmt(input)} · cache ${fmt(cache)} · cacheW ${fmt(cacheW)} · out ${fmt(output)}]`
-          : `  [in ${fmt(input)} · cache ${fmt(cache)} · out ${fmt(output)}]`;
-        result.push({ text: usageLine, color: "gray", dim: true, blockIndex: blockIdx, turnIndex: turn.index, msgIndex: ai, kind: "header" });
-        blockIdx++;
+        const usage = cacheW > 0
+          ? `in ${fmt(input)} · cache ${fmt(cache)} · cacheW ${fmt(cacheW)} · out ${fmt(output)}`
+          : `in ${fmt(input)} · cache ${fmt(cache)} · out ${fmt(output)}`;
+        body(usage, "gray", true, turn.index, "usage");
+        out.push({ text: "", kind: "spacer", turn: turn.index, indent: 0 });
 
-        // blocking: reasoning (thinking)
-        for (const b of call.blocks) {
-          if (b.kind === "thinking" || b.kind === "reasoning") {
-            const txt = (b.text ?? "").slice(0, MAX_BLOCK_LINES);
-            const thinker = showThinking ? txt : `  [thinking ${txt.slice(0, 60)}${txt.length > 60 ? "…" : ""}]`;
-            result.push({ text: thinker, color: "yellow", dim: !showThinking, blockIndex: blockIdx, turnIndex: turn.index, msgIndex: ai, kind: "thinking" });
-            blockIdx++;
+        // thinking — inline preview is capped, but the expanded reader gets the full text
+        const thinkFull = collectBlocks(call.blocks, (b) => b.kind === "thinking" || b.kind === "reasoning");
+        const thinkTxt = thinkFull.slice(0, MAX_BLOCK_CHARS);
+        if (thinkTxt.trim()) {
+          const expand = { title: "thinking", body: thinkFull, color: C.thinking };
+          if (showThinking) {
+            tag("thinking", C.thinking, turn.index, "thinking", expand);
+            for (const l of thinkTxt.split("\n")) body(l, C.thinking, true, turn.index, "thinking", expand);
+          } else {
+            const preview = thinkFull.replace(/\s+/g, " ").trim().slice(0, 72);
+            tag(`thinking · ${preview}${thinkFull.length > 72 ? "…" : ""}`, C.thinking, turn.index, "thinking", expand);
           }
+          out.push({ text: "", kind: "spacer", turn: turn.index, indent: 0 });
         }
 
-        // text reply
-        for (const b of call.blocks) {
-          if (b.kind === "text") {
-            const txt = (b.text ?? "").slice(0, MAX_BLOCK_LINES);
-            for (const line of txt.split("\n")) {
-              result.push({ text: line, color: "white", blockIndex: blockIdx, turnIndex: turn.index, msgIndex: ai, kind: "assistant" });
-              blockIdx++;
-            }
-          }
+        // assistant text — inline preview is capped, expanded reader gets the full text
+        const textFull = collectBlocks(call.blocks, (b) => b.kind === "text");
+        const textTxt = textFull.slice(0, MAX_BLOCK_CHARS);
+        if (textTxt.trim()) {
+          const expand = { title: "assistant text", body: textFull, color: C.assistant };
+          tag("assistant", C.assistant, turn.index, "assistant", expand);
+          for (const l of textTxt.split("\n")) body(l, C.assistant, false, turn.index, "assistant", expand);
+          out.push({ text: "", kind: "spacer", turn: turn.index, indent: 0 });
         }
 
-        // tool calls in the assistant blocks
+        // tool calls (actions)
         for (const b of call.blocks) {
-          if (b.kind === "tool_use") {
-            const inputPreview = b.input ? JSON.stringify(b.input).slice(0, 120) : "";
-            result.push({ text: `  ⛭ ${b.toolName ?? "tool"}(${inputPreview})`, color: "cyan", dim: true, blockIndex: blockIdx, turnIndex: turn.index, msgIndex: ai, kind: "toolCall" });
-            blockIdx++;
-          }
+          if (b.kind !== "tool_use") continue;
+          const inputPreview = b.input ? truncateVisual(JSON.stringify(b.input), 96) : "(no args)";
+          const expand = { title: `tool call · ${b.toolName ?? "tool"}`, lang: "json", body: prettyToolInput(b.input), color: "cyan" };
+          tag(`tool · call · ${b.toolName ?? "tool"}(${inputPreview})`, C.toolUse, turn.index, "toolUse", expand);
+        }
+
+        // tool results — paired output of the actions. Inline preview is capped;
+        // the expanded reader gets the full, uncapped text.
+        for (const tr of turn.toolResults) {
+          const fullRaw = tr.blocks.map((b) => b.text ?? "").join("\n");
+          const previewSrc = fullRaw.slice(0, TOOL_RESULT_FULL_CAP);
+          const raw = previewSrc.split("\n");
+          const color = tr.isError ? C.toolError : C.toolResult;
+          const expand = { title: `tool result · ${tr.toolName ?? "tool"}`, body: fullRaw, color };
+          tag(`result${tr.isError ? " · error" : ""} · ${tr.toolName ?? "tool"}`, color, turn.index, "toolResult", expand);
+          for (const l of raw.slice(0, TOOL_RESULT_PREVIEW_LINES)) body(l, color, true, turn.index, "toolResult", expand);
+          const totalLines = fullRaw.split("\n").length;
+          const more = totalLines - TOOL_RESULT_PREVIEW_LINES;
+          if (more > 0) body(`+${more} more line${more === 1 ? "" : "s"} — Enter to expand`, C.hint, true, turn.index, "hint", expand);
+          out.push({ text: "", kind: "spacer", turn: turn.index, indent: 0 });
         }
       }
 
-      // tool results
-      for (const tr of turn.toolResults) {
-        const txt = tr.blocks.map((b) => b.text ?? "").join("\n").slice(0, MAX_TOOL_RESULT_LINES * 80);
-        const lines = txt.split("\n").slice(0, MAX_TOOL_RESULT_LINES);
-        for (const l of lines) {
-          result.push({ text: `  ↩ ${tr.toolName ?? "tool"}: ${l.slice(0, 120)}`, color: "gray", dim: true, blockIndex: blockIdx, turnIndex: turn.index, msgIndex: -1, kind: "toolResult" });
-          blockIdx++;
-        }
-        if (txt.split("\n").length > MAX_TOOL_RESULT_LINES) {
-          result.push({ text: `  … (${txt.split("\n").length - MAX_TOOL_RESULT_LINES} more lines)`, color: "gray", dim: true, blockIndex: blockIdx, turnIndex: turn.index, msgIndex: -1, kind: "toolResult" });
-          blockIdx++;
-        }
-      }
-
-      // events
-      for (const e of turn.events) {
-        buildEventLine(result, e, blockIdx, turn.index);
-        blockIdx++;
-      }
-
-      // closing line
-      result.push({ text: "  └─", color: "gray", dim: true, blockIndex: blockIdx, turnIndex: turn.index, msgIndex: -1, kind: "event" });
-      blockIdx++;
+      out.push({ text: "└─", color: "gray", dim: true, kind: "close", turn: turn.index, indent: 0 });
+      spacer(turn.index);
     }
-    return result;
+    return out;
   }, [session, showThinking]);
 
-  // clamp cursor
-  const safeCursor = Math.min(cursor, Math.max(0, lines.length - 1));
-  const cursorLine = lines[safeCursor];
+  // wrap each logical line to its available width (prefix 2 + indent)
+  const rLines: RLine[] = useMemo(() => {
+    const out: RLine[] = [];
+    for (const ll of llines) {
+      if (ll.kind === "spacer") { out.push({ ...ll, text: "", cont: false }); continue; }
+      const ww = Math.max(4, columns - 2 - (ll.indent ?? 0));
+      const segs = wordWrap(ll.text, ww);
+      for (let i = 0; i < segs.length; i++) {
+        const seg = segs[i] ?? "";
+        out.push({ ...ll, text: seg, cont: i > 0 });
+      }
+    }
+    return out;
+  }, [llines, columns]);
+
+  // Jump targets: the block tag lines (system prompt, turn headers, user prompt,
+  // thinking, assistant text, each tool call, each tool result, events…). The
+  // cursor only ever rests on one of these; j/k hops between them.
+  const anchors: number[] = useMemo(() => {
+    const out: number[] = [];
+    for (let i = 0; i < rLines.length; i++) if (rLines[i]?.isTag) out.push(i);
+    return out;
+  }, [rLines]);
+
+  const cursor = anchors.length > 0 ? (anchors[Math.min(anchorIdx, anchors.length - 1)] ?? 0) : 0;
+  const safeCursor = Math.min(cursor, Math.max(0, rLines.length - 1));
+
+  const viewportRows = Math.max(1, rows - 5);
+  const half = Math.max(1, Math.floor(viewportRows / 2));
 
   useKeyboard((key) => {
-    if (key.name === "down" || key.name === "j") setCursor((c) => Math.min(c + 1, Math.max(0, lines.length - 1)));
-    else if (key.name === "up" || key.name === "k") setCursor((c) => Math.max(0, c - 1));
-    else if (key.name === "pageDown") setCursor((c) => Math.min(c + 10, Math.max(0, lines.length - 1)));
-    else if (key.name === "pageUp") setCursor((c) => Math.max(0, c - 10));
-    else if (key.name === "home") setCursor(0);
-    else if (key.name === "end") setCursor(Math.max(0, lines.length - 1));
-    else if (key.name === "t") setShowThinking((s) => !s);
+    if (reader !== null) return; // focused reader owns the keyboard
+    const n = anchors.length;
+    if (n === 0) return; // nothing to hop between
+    if (key.name === "down" || key.name === "j") setAnchorIdx((a) => Math.min(a + 1, n - 1));
+    else if (key.name === "up" || key.name === "k") setAnchorIdx((a) => Math.max(0, a - 1));
+    else if (key.name === "pagedown" || (key.name === "d" && key.ctrl)) setAnchorIdx((a) => pageAnchor(anchors, a, half));
+    else if (key.name === "pageup" || (key.name === "u" && key.ctrl)) setAnchorIdx((a) => pageAnchor(anchors, a, -half));
+    else if (key.name === "home" || (key.name === "g" && !key.shift)) setAnchorIdx(0);
+    else if (key.name === "end" || (key.name === "g" && key.shift)) setAnchorIdx(n - 1);
+    else if (key.name === "return" || key.name === "enter") {
+      const rl = rLines[safeCursor];
+      if (rl?.expand) setReader(rl.expand);
+    } else if (key.name === "t") setShowThinking((s) => !s);
     else if (key.name === "c") onOpenContext();
     else if (key.name === "s") onOpenSysPrompt();
     else if (key.name === "f") onOpenFiles();
-    else if (key.name === "q" || key.name === "escape") onBack();
+    else if ((key.name === "q" || key.name === "escape") && !key.shift) onBack();
   });
 
-  // window into lines
-  const half = Math.max(1, Math.floor((rows - 5) / 2));
-  const start = Math.max(0, Math.min(safeCursor - half, Math.max(0, lines.length - (rows - 5))));
-  const visible = lines.slice(start, start + rows - 5);
-  const subtitle = `${meta.name ?? meta.id.slice(0, 8)}  ${meta.cwd || meta.project} · ${session.turns.length} turns · ${session.assistantCalls.length} LLM requests · ${lines.length} lines`;
+  const start = Math.max(0, Math.min(safeCursor - half, Math.max(0, rLines.length - viewportRows)));
+  const visible = rLines.slice(start, start + viewportRows);
+  const subtitle = `${meta.name ?? meta.id.slice(0, 8)}  ${tildeHome(meta.cwd || meta.project)} · ${session.turns.length} turns · ${session.assistantCalls.length} reqs · ${anchors.length} blocks`;
 
   return (
     <box flexDirection="column" width="100%" height={rows}>
       <Header title={meta.name ?? meta.id.slice(0, 8)} subtitle={subtitle} />
-      <box flexDirection="column" flexGrow={1}>
+      <box flexDirection="column" flexGrow={1} width={columns}>
         {visible.map((line, i) => {
           const absIdx = start + i;
-          const isCursor = absIdx === safeCursor;
+          const isCursor = absIdx === safeCursor && !line.cont && line.kind !== "spacer";
+          const prefix = isCursor ? "▶ " : "  ";
+          const indent = " ".repeat(line.indent ?? 0);
+          const body = line.text ?? "";
           return (
             <text
               key={absIdx}
@@ -173,19 +256,28 @@ export function SessionDetail({
                 (line.dim ? TextAttributes.DIM : 0)
               }
             >
-              {isCursor ? "▶ " : "  "}{line.text}
+              {prefix + indent + body}
             </text>
           );
         })}
       </box>
       <KeyHint keys={[
-        ["scroll", "j/k"],
+        ["block", "j/k"],
+        ["half page", "Ctrl-u/d"],
+        ["top/bot", "g/G"],
+        ["expand", "Enter"],
         ["context", "c"],
-        ["system prompt", "s"],
+        ["sys prompt", "s"],
         ["files", "f"],
-        ["show thinking", "t"],
         ["back", "q"],
+        ["quit app", "Q"],
       ]} />
+
+      {reader ? (
+        <box position="absolute" width="100%" height={rows} top={0} left={0} backgroundColor="#0b0b0b">
+          <BlockReader content={reader} onBack={() => setReader(null)} />
+        </box>
+      ) : null}
     </box>
   );
 }
@@ -194,38 +286,92 @@ function fmt(n: number): string {
   return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n);
 }
 
-function buildTurnHeader(out: Line[], turn: Turn, blockIndex: number) {
-  const model = turn.model ?? "—";
-  const mode = turn.thinkingLevel ? `· think:${turn.thinkingLevel}` : "";
-  const reqs = turn.assistantCalls.length;
-  const ctx = turn.usage.input + turn.usage.cacheRead;
-  const line = `┌─ turn ${turn.index} ${model} ${mode} · ${reqs} req${reqs !== 1 ? "s" : ""} · ctx ${fmt(ctx)}`;
-  out.push({ text: line, color: "cyan", bold: true, blockIndex, turnIndex: turn.index, msgIndex: -1, kind: "header" });
+/**
+ * Half-page (Ctrl-u/d, PgUp/PgDn) hop: jump to the anchor nearest to
+ * `anchors[from] + delta` rendered lines, always moving at least one block.
+ */
+function pageAnchor(anchors: number[], from: number, delta: number): number {
+  if (anchors.length === 0) return 0;
+  if (delta >= 0) {
+    const target = (anchors[from] ?? 0) + delta;
+    for (let i = from + 1; i < anchors.length; i++) {
+      if ((anchors[i] ?? Number.POSITIVE_INFINITY) >= target) return i;
+    }
+    return anchors.length - 1;
+  }
+  const target = (anchors[from] ?? 0) + delta;
+  for (let i = from - 1; i >= 0; i--) {
+    if ((anchors[i] ?? Number.NEGATIVE_INFINITY) <= target) return i;
+  }
+  return 0;
 }
 
-function appendMessageLines(out: Line[], msg: NormalizedMessage, blockIndex: number, turnIdx: number, msgIdx: number, kind: Line["kind"]) {
-  const txt = msg.blocks
-    .filter((b) => b.kind === "text")
-    .map((b) => b.text ?? "")
-    .join("\n")
-    .trim();
-  const lines = txt.split("\n").slice(0, MAX_BLOCK_LINES);
-  for (const l of lines) {
-    out.push({
-      text: l.slice(0, 600),
-      color: msg.role === "user" ? "green" : "white",
-      dim: msg.role !== "user",
-      blockIndex,
-      turnIndex: turnIdx,
-      msgIndex: msgIdx,
-      kind,
-    });
+function truncateVisual(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max - 1) + "…";
+}
+
+function collectBlocks(blocks: ContentBlockView[], pred: (b: ContentBlockView) => boolean): string {
+  return blocks.filter(pred).map((b) => b.text ?? "").join("\n");
+}
+
+function prettyToolInput(input: unknown): string {
+  if (input == null) return "(no input)";
+  try { return JSON.stringify(input, null, 2) ?? String(input); } catch { return String(input); }
+}
+
+type TagFn = (text: string, color: string, turn: number, kind: Kind, expand?: ReaderContent) => void;
+type BodyFn = (text: string, color: string, dim: boolean, turn: number, kind: Kind, expand?: ReaderContent) => void;
+
+function appendMessage(out: LLine[], msg: NormalizedMessage, turnIdx: number, tag: TagFn, body: BodyFn) {
+  const full = msg.blocks.filter((b) => b.kind === "text").map((b) => b.text ?? "").join("\n").trim();
+  const txt = full.slice(0, MAX_BLOCK_CHARS);
+  const isUser = msg.role === "user";
+  const color = isUser ? C.user : C.note;
+  const expand = { title: isUser ? "user message" : "message", body: full, color };
+  tag(isUser ? "user · prompt" : "message", color, turnIdx, isUser ? "user" : "note", expand);
+  if (!txt) { body("(empty)", "gray", true, turnIdx, isUser ? "user" : "note", expand); return; }
+  for (const l of txt.split("\n")) body(l, color, !isUser, turnIdx, isUser ? "user" : "note", expand);
+}
+
+function buildEvent(out: LLine[], e: SessionEventView, turn: number, tag: TagFn, body: BodyFn) {
+  const detail = e.detail ?? "";
+  const fullBody = typeof (e as { body?: string }).body === "string" ? (e as { body?: string }).body as string : detail;
+  if (e.kind === "compaction") {
+    const expand = { title: "compaction", body: fullBody, color: C.compaction };
+    tag("compaction", C.compaction, turn, "compaction", expand);
+    body(detail, C.compaction, true, turn, "compaction", expand);
+  } else if (e.kind === "model_change") {
+    tag("model change", C.model, turn, "model");
+    body(`model → ${detail}`, C.model, true, turn, "model");
+  } else if (e.kind === "thinking_level_change") {
+    tag("thinking level", C.model, turn, "thinkingLvl");
+    body(`thinking → ${detail}`, C.model, true, turn, "thinkingLvl");
+  } else if (e.kind === "branch_summary") {
+    const expand = { title: "branch summary", body: fullBody, color: C.note };
+    tag("branch summary", C.note, turn, "note", expand);
+    body(detail, C.note, true, turn, "note", expand);
+  } else if (e.kind === "label") {
+    tag("label", C.note, turn, "note");
+    body(detail, C.note, true, turn, "note");
+  } else {
+    const expand = { title: `event · ${classifyCustom(detail)}`, body: fullBody, color: C.custom };
+    tag(`event · ${classifyCustom(detail)}`, C.custom, turn, "custom", expand);
+    body(detail, C.custom, true, turn, "custom", expand);
   }
 }
 
-function buildEventLine(out: Line[], e: SessionEventView, blockIndex: number, turnIndex: number) {
-  const prefix = e.kind === "compaction" ? "╒" : "◈";
-  const color = e.kind === "compaction" ? "yellow" : "gray";
-  const t = e.kind === "compaction" ? `╒ COMPACTION: ${e.detail?.slice(0, 160) ?? ""}` : `◈ ${e.detail?.slice(0, 160) ?? ""}`;
-  out.push({ text: t, color, dim: true, blockIndex, turnIndex, msgIndex: -1, kind: "event" });
+function classifyCustom(detail: string): string {
+  const d = detail.toLowerCase();
+  if (d.includes("skill") || d.includes("prompts:")) return "skill";
+  if (d.includes("agents.md") || d.includes("agents") || d.includes("permission")) return "context file";
+  if (d.includes("attachment")) return "attachment";
+  if (d.startsWith("command:") || d.includes("command:")) return "command";
+  if (d.includes("observation")) return "memory";
+  if (d.includes("reflection")) return "memory";
+  if (d.includes("web-search") || d.includes("web · search")) return "web search";
+  if (d.includes("subagent") || d.includes("plannotator")) return "subagent";
+  if (d.includes("bash") || d.includes("exec")) return "bash";
+  if (d.includes("thread settings")) return "thread settings";
+  if (d.includes("mode →")) return "mode";
+  return "event";
 }

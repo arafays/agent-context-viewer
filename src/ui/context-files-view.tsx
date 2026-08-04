@@ -1,7 +1,8 @@
 import { TextAttributes } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Header, KeyHint, useSelection } from "./components.tsx"
+import { tildeHome, wordWrap } from "./util.ts"
 import type { AgentSession } from "../adapters/types.ts"
 
 export function ContextFilesView({
@@ -20,24 +21,42 @@ export function ContextFilesView({
   useKeyboard((key) => {
     if (key.name === "down" || key.name === "j") fileSel.move(1);
     else if (key.name === "up" || key.name === "k") fileSel.move(-1);
-    else if (key.name === "home") fileSel.move(-Number.MAX_SAFE_INTEGER);
-    else if (key.name === "end") fileSel.move(Number.MAX_SAFE_INTEGER);
-    else if (key.name === "q" || key.name === "escape") onBack();
+    else if (key.name === "pagedown") setContentScroll((s) => s + 10);
+    else if (key.name === "pageup") setContentScroll((s) => Math.max(0, s - 10));
+    else if (key.name === "home") setContentScroll(0);
+    else if (key.name === "end") setContentScroll(wrappedContent.length);
+    else if ((key.name === "q" || key.name === "escape") && !key.shift) onBack();
   });
 
+  const borderPad = 4;
   const filePaneWidth = Math.floor(columns / 3);
-  const contentPaneWidth = columns - filePaneWidth - 2;
+  const contentPaneWidth = columns - filePaneWidth;
+  const fileContentWidth = filePaneWidth - borderPad;
+  const contentContentWidth = contentPaneWidth - borderPad;
 
-  const fileLines = files.map((f, i) => ({
-    text: `${f.global ? "[global]" : "       "} ${truncPath(f.path, filePaneWidth - 12)}`,
-    sel: i === fileSel.selected,
-  }));
+  const fileLines = files.map((f, i) => {
+    const prefix = i === fileSel.selected ? "▶ " : "  ";
+    const raw = `${f.global ? "[global]" : "       "} ${truncPath(tildeHome(f.path), fileContentWidth - 12)}`;
+    const full = prefix + raw;
+    const truncated = full.length > fileContentWidth ? full.slice(0, fileContentWidth - 1) + "…" : full;
+    return { text: truncated, sel: i === fileSel.selected };
+  });
 
   const content = selectedFile?.content ?? "";
-  const contentLines = content.split("\n");
+  const maxContentWidth = contentContentWidth - 2;
   const [contentScroll, setContentScroll] = useState(0);
-
-  const visibleContent = contentLines.slice(contentScroll, contentScroll + rows - 6);
+  const viewportRows = Math.max(1, rows - 6);
+  // word-wrap the selected file's content to the content pane width
+  const wrappedContent = useMemo(
+    () => (selectedFile ? wordWrap(content, Math.max(8, maxContentWidth)) : []),
+    [content, maxContentWidth, selectedFile],
+  );
+  // reset scroll to top whenever the selected file changes
+  useEffect(() => { setContentScroll(0); }, [selectedFile]);
+  const safeContentScroll = Math.min(contentScroll, Math.max(0, wrappedContent.length - 1));
+  const half = Math.max(1, Math.floor(viewportRows / 2));
+  const cStart = Math.max(0, Math.min(safeContentScroll - half, Math.max(0, wrappedContent.length - viewportRows)));
+  const visibleContent = wrappedContent.slice(cStart, cStart + viewportRows);
 
   return (
     <box flexDirection="column" width="100%" height={rows}>
@@ -51,16 +70,16 @@ export function ContextFilesView({
               attributes={f.sel ? TextAttributes.BOLD : TextAttributes.DIM}
               fg={f.sel ? "cyan" : undefined}
             >
-              {f.sel ? "▶ " : "  "}{f.text}
+              {f.text}
             </text>
           ))}
         </box>
         <box flexDirection="column" width={contentPaneWidth} borderStyle="rounded" borderColor="gray" padding={1}>
-          <text attributes={TextAttributes.BOLD} fg="gray"> {selectedFile?.path ?? "(select a file)"}</text>
+          <text attributes={TextAttributes.BOLD} fg="gray"> {tildeHome(selectedFile?.path ?? "(select a file)")}</text>
           {selectedFile ? (
             <box flexDirection="column" flexGrow={1}>
               {visibleContent.map((l, i) => (
-                <text key={i}>{l}</text>
+                <text key={cStart + i} attributes={TextAttributes.DIM}>{l || " "}</text>
               ))}
             </box>
           ) : (
@@ -68,7 +87,7 @@ export function ContextFilesView({
           )}
         </box>
       </box>
-      <KeyHint keys={[["scroll files", "j/k"], ["back", "q"]]} />
+      <KeyHint keys={[["scroll files", "j/k"], ["back", "q"], ["quit app", "Q"]]} />
     </box>
   );
 }

@@ -42,23 +42,30 @@ export function ContextView({
   useKeyboard((key) => {
     if (key.name === "down" || key.name === "j") reqSel.move(1);
     else if (key.name === "up" || key.name === "k") reqSel.move(-1);
-    else if (key.name === "s") onBack(); // ... actually let me keep s for system prompt hmm
+    else if (key.name === "pageDown") reqSel.move(10);
+    else if (key.name === "pageUp") reqSel.move(-10);
+    else if (key.name === "home") reqSel.move(-Number.MAX_SAFE_INTEGER);
+    else if (key.name === "end") reqSel.move(Number.MAX_SAFE_INTEGER);
+    else if (key.name === "s") { /* system prompt navigation handled by App */ }
     else if (key.name === "d") setShowSnapshots((s) => !s);
-    else if (key.name === "q" || key.name === "escape") onBack();
+    else if ((key.name === "q" || key.name === "escape") && !key.shift) onBack();
   });
 
-  // Build curve bar text
+  // Build curve bar text — truncate to fit terminal width
   const curveLines = useMemo(() => {
     const maxCtx = curve.reduce((m, b) => Math.max(m, b.contextTokens), 0) || 1;
-    return curve.map((bar, i) => {
+    const maxLineWidth = columns - 4;
+    const barWidth = Math.min(Math.max(columns - 40, 8), 26);
+    return curve.map((bar) => {
       const pct = bar.contextTokens / maxCtx;
-      const barWidth = Math.min(columns - 50, 26);
       const filled = Math.round(pct * barWidth);
       const empty = barWidth - filled;
       const barStr = "█".repeat(filled) + "░".repeat(Math.max(0, empty));
       const compacted = bar.compacted ? " ⚒" : "";
+      const raw = `#${String(bar.requestIndex).padStart(3)} ${barStr}  ${fmt(bar.contextTokens)}  in ${fmt(bar.input)}  cache ${fmt(bar.cacheRead)}${compacted}`;
+      const text = raw.length > maxLineWidth ? raw.slice(0, maxLineWidth - 1) + "…" : raw;
       return {
-        text: `#${String(bar.requestIndex).padStart(3)} ${barStr}  ${fmt(bar.contextTokens)}  in ${fmt(bar.input)}  cache ${fmt(bar.cacheRead)}${compacted}`,
+        text,
         compacted: bar.compacted,
         requestIndex: bar.requestIndex,
       };
@@ -108,39 +115,48 @@ export function ContextView({
     return out;
   }, [step]);
 
-  const halfCurve = Math.max(1, Math.floor((rows - 10) / 2));
-  const curveStart = Math.max(0, Math.min(reqSel.selected - halfCurve, Math.max(0, curveLines.length - (rows - 10))));
-  const visibleCurve = curveLines.slice(curveStart, curveStart + rows - 10);
+  const viewportRows = Math.max(1, rows - 10);
+  const halfCurve = Math.max(1, Math.floor(viewportRows / 2));
+  const curveStart = Math.max(0, Math.min(reqSel.selected - halfCurve, Math.max(0, curveLines.length - viewportRows)));
+  const visibleCurve = curveLines.slice(curveStart, curveStart + viewportRows);
+
+  const maxLineWidth = columns - 4;
 
   return (
     <box flexDirection="column" width="100%" height={rows}>
       <Header title={`Context — ${session.meta.id.slice(0, 8)}`} subtitle={`${session.meta.cwd || session.meta.project} · ${steps.length} LLM requests`} />
-      <box flexDirection="column" flexGrow={1}>
+      <box flexDirection="column" flexGrow={1} width={columns}>
         {/* Curve */}
-        <box flexDirection="column">
-          <text attributes={TextAttributes.BOLD} fg="gray">CONTEXT TOKENS PER REQUEST (input+cacheRead) — max {fmt(maxCtx)}</text>
-          {visibleCurve.map((c, i) => (
+        <box flexDirection="column" width={columns}>
+          <text attributes={TextAttributes.BOLD} fg="gray">TOKENS PER REQUEST (input+cacheRead) — max {fmt(maxCtx)}</text>
+          {visibleCurve.map((c) => (
             <text key={c.requestIndex} fg={c.compacted ? "yellow" : undefined} attributes={c.requestIndex === reqSel.selected ? TextAttributes.BOLD : TextAttributes.DIM}>
               {c.requestIndex === reqSel.selected ? ">" : " "} {c.text}
             </text>
           ))}
         </box>
         {/* Detail pane */}
-        <box flexDirection="column" borderStyle="rounded" borderColor="gray" padding={1}>
-          {detailLines.map((l, i) => (
-            <text key={i} fg={l.startsWith("╒") ? "yellow" : l.startsWith("  cacheRead") ? "yellow" : undefined} attributes={l.startsWith("+") ? TextAttributes.BOLD : TextAttributes.DIM}>
-              {l}
-            </text>
-          ))}
+        <box flexDirection="column" borderStyle="rounded" borderColor="gray" padding={1} width={columns}>
+          {detailLines.map((l, i) => {
+            const truncated = l.length > maxLineWidth ? l.slice(0, maxLineWidth - 1) + "…" : l;
+            return (
+              <text key={i} fg={l.startsWith("╒") ? "yellow" : l.startsWith("  cacheRead") ? "yellow" : undefined} attributes={l.startsWith("+") ? TextAttributes.BOLD : TextAttributes.DIM}>
+                {truncated}
+              </text>
+            );
+          })}
         </box>
         {/* Snapshot */}
         {showSnapshots ? (
-          <box flexDirection="column" flexGrow={1}>
-            {snapshotLines.slice(snapshotOffset, snapshotOffset + Math.max(2, rows - 10)).map((m, i) => (
-              <text key={i} fg={m.color} attributes={m.dim ? TextAttributes.DIM : TextAttributes.BOLD}>
-                {m.text}
-              </text>
-            ))}
+          <box flexDirection="column" flexGrow={1} width={columns}>
+            {snapshotLines.slice(snapshotOffset, snapshotOffset + Math.max(2, viewportRows)).map((m, i) => {
+              const truncated = m.text.length > maxLineWidth ? m.text.slice(0, maxLineWidth - 1) + "…" : m.text;
+              return (
+                <text key={i} fg={m.color} attributes={m.dim ? TextAttributes.DIM : TextAttributes.BOLD}>
+                  {truncated}
+                </text>
+              );
+            })}
           </box>
         ) : (
           <text attributes={TextAttributes.DIM}>snapshots hidden (d to show)</text>
@@ -149,9 +165,10 @@ export function ContextView({
       <KeyHint keys={[
         ["request", "j/k"],
         ["snapshots", "d"],
-        ["system prompt", "s"],
-        ["scroll", "PgUp/PgDn"],
+        ["scroll req", "PgUp/PgDn"],
+        ["system pr", "s"],
         ["back", "q"],
+        ["quit app", "Q"],
       ]} />
     </box>
   );

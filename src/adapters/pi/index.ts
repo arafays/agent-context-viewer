@@ -211,11 +211,13 @@ function blockView(block: { type?: string; [k: string]: unknown }): ContentBlock
     case "reasoning":
       return { kind: "reasoning", text: typeof block.text === "string" ? block.text : "" };
     case "tool_use":
+    case "toolCall":
       return {
         kind: "tool_use",
         toolName: typeof block.name === "string" ? block.name : undefined,
         toolCallId: typeof block.id === "string" ? block.id : undefined,
-        input: block.input,
+        // Pi assistant toolCall blocks store args under `arguments`; Anthropic-style under `input`.
+        input: block.input ?? block.arguments,
       };
     case "tool_result": {
       const content = block.content;
@@ -370,6 +372,21 @@ export function loadSession(path: string): PiSession {
         const turn = ensureTurn(ts);
         turn.toolResults.push(norm);
         turn.entryEnd = entry._index;
+      } else if (msg.role === "bashExecution") {
+        // Inline bash execution — surface like a tool result so it's readable.
+        const turn = ensureTurn(ts);
+        const cmd = typeof msg.command === "string" ? msg.command : "";
+        const out = typeof msg.output === "string" ? msg.output : "";
+        const exit = typeof msg.exitCode === "number" ? msg.exitCode : 0;
+        const full = `$$ ${cmd}\n${out}${msg.cancelled ? "\n[cancelled]" : ""}`.trim();
+        turn.events.push({
+          kind: "custom",
+          timestamp: ts,
+          detail: `bash · exec${exit !== 0 ? " · error" : ""} — ${cmd.slice(0, 120)}`,
+          customType: "bashExecution",
+          body: full,
+        });
+        turn.entryEnd = entry._index;
       } else if (msg.role === "custom" || msg.role === "hookMessage") {
         // hook/custom messages participate in context; surface as events
         const turn = ensureTurn(ts);
@@ -423,6 +440,26 @@ export function loadSession(path: string): PiSession {
         timestamp: ts,
         detail: `${entry.customType}${dataStr ? ` — ${dataStr}` : ""}`,
         customType: entry.customType,
+      });
+      turn.entryEnd = entry._index;
+    } else if (entry.type === "custom_message") {
+      // custom_message participates in context and is user-visible (subagent
+      // results/notifies, plannotator-complete, skill prompt catalogs). Surface
+      // it as an event row so it shows up in the transcript.
+      const ts = entryTimestamp(entry);
+      const turn = ensureTurn(ts);
+      const body = typeof entry.content === "string"
+        ? entry.content
+        : Array.isArray(entry.content)
+          ? entry.content.map((c) => typeof c === "string" ? c : ((c as { text?: string })?.text ?? "")).join("\n")
+          : "";
+      const label = entry.customType ?? (body ? "message" : "custom");
+      turn.events.push({
+        kind: "custom",
+        timestamp: ts,
+        detail: `${label}${body ? ` — ${body.replace(/\s+/g, " ").trim().slice(0, 140)}` : ""}`,
+        customType: entry.customType,
+        body,
       });
       turn.entryEnd = entry._index;
     } else if (entry.type === "session_info") {
