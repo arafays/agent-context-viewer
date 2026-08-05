@@ -126,7 +126,7 @@ export class SearchFileBuilder {
 export function sessionSearchLines(
   meta: SessionMeta,
   turns: Turn[],
-  opts?: { startTurn?: number; endTurn?: number },
+  opts?: { startTurn?: number; endTurn?: number; systemPrompt?: string },
 ): SearchableLine[] {
   const start = opts?.startTurn ?? 0;
   const end = opts?.endTurn ?? turns.length - 1;
@@ -137,6 +137,17 @@ export function sessionSearchLines(
     lineNo++;
     out.push({ lineNo, header, content });
   };
+
+  // system prompt is the first searchable unit (labeled [system], before any turns)
+  const sp = opts?.systemPrompt?.trim();
+  if (sp) {
+    const model = meta.model ?? "—";
+    const date = meta.updatedAt.slice(0, 10);
+    push(
+      `[${meta.tool}] [${meta.project || meta.cwd || "?"}] [${model}] [${date}] [system] system prompt`,
+      collapse(sp),
+    );
+  }
 
   for (const turn of turns) {
     if (turn.index < start || turn.index > end) continue;

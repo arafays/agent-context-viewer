@@ -106,7 +106,7 @@ export function buildSearchIndex(sessionsByTool: Record<AgentTool, SessionMeta[]
     ready: false,
     writeSession(meta, session) {
       const file = join(dir, sessionFileName(meta));
-      const lines = sessionSearchLines(meta, session.turns);
+      const lines = sessionSearchLines(meta, session.turns, { systemPrompt: session.contextInfo.systemPrompt });
       if (lines.length === 0) return 0;
       const text = lines.map((l) => `${l.header}\n${l.content}\n`).join("");
       mkdirSync(dirname(file), { recursive: true });
@@ -237,9 +237,10 @@ export function buildSearchIndex(sessionsByTool: Record<AgentTool, SessionMeta[]
   return { index, written, removed, error: index.error };
 }
 
-/** Extract the `[turn N]` index from a header line. */
+/** Extract the `[turn N]` or `[system]` index from a header line. */
 function turnFromHeader(header: string): number {
-  const m = header.match(/\[turn (\d+)\]/);
+  if (/\[system\]/.test(header)) return -1;
+  const m = header.match(/\[turn (-?\d+)\]/);
   return m ? Number(m[1]) : 0;
 }
 

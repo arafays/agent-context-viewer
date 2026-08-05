@@ -177,6 +177,7 @@ export function discoverSessions(): SessionMeta[] {
  * Searchable text for the fuzzy index, in the header/content line format.
  * Codex embeds AGENTS.md + skills as user-role messages; we skip those
  * (noise for content search) and keep real prompts + assistant replies.
+ * Also emits the exact system prompt from session_meta (first unit).
  */
 function buildSearchText(meta: SessionMeta, text: string): string {
   const b = SearchFileBuilder.start(meta);
@@ -185,6 +186,13 @@ function buildSearchText(meta: SessionMeta, text: string): string {
     const ev = parseLine(line);
     if (!ev) continue;
     const p = (ev.payload ?? {}) as Record<string, unknown>;
+    if (ev.type === "session_meta") {
+      const bi = p.base_instructions as { text?: string } | undefined;
+      if (bi && typeof bi.text === "string" && bi.text.trim()) {
+        b.emit(-1, "system prompt", bi.text);
+      }
+      continue;
+    }
     if (ev.type !== "response_item" || p.type !== "message") continue;
     const role = p.role as string | undefined;
     const blocks = (p.content as Array<{ type?: string; text?: string }> | undefined) ?? [];

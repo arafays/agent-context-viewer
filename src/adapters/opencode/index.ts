@@ -316,16 +316,40 @@ function buildSystemPrompt(
   tools: string[],
 ): string {
   const lines: string[] = [
-    "[opencode system prompt — not persisted by opencode; reconstructed at view time]",
+    "╔══════════════════════════════════════════════════════════════════╗",
+    "║  opencode system prompt — reconstructed at view time            ║",
+    "║  opencode does NOT persist the system prompt in its database.   ║",
+    "║  This is a best-effort reconstruction from available session    ║",
+    "║  data: inferred tools, current skills, and AGENTS.md/CLAUDE.md  ║",
+    "║  as they exist on disk today (may differ from session time).    ║",
+    "╚══════════════════════════════════════════════════════════════════╝",
     "",
-    `cwd: ${cwd}`,
-    `tools: ${tools.join(", ")}`,
-    ...(skills.length ? [`skills: ${skills.map((s) => s.name).join(", ")}`] : []),
+    "---",
     "",
-    "# Context files",
+    `Working directory: ${cwd}`,
+    "",
+    "---",
+    "",
+    "## Tools",
+    "",
   ];
-  for (const f of contextFiles) {
-    lines.push("", `## ${f.path}`, f.content);
+  for (const t of tools) {
+    lines.push(`- ${t}`);
+  }
+  if (skills.length > 0) {
+    lines.push("", "---", "", "## Skills", "");
+    for (const s of skills) {
+      lines.push(`- **${s.name}** — ${s.description || "(no description)"}`);
+    }
+  }
+  if (contextFiles.length > 0) {
+    lines.push("", "---", "", "## Context files (AGENTS.md / CLAUDE.md)", "");
+    for (const f of contextFiles) {
+      lines.push(`### ${f.path}`);
+      lines.push("");
+      lines.push(f.content);
+      lines.push("");
+    }
   }
   return lines.join("\n");
 }
