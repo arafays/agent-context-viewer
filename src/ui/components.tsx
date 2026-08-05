@@ -1,9 +1,10 @@
 import { TextAttributes } from "@opentui/core"
 import { useTerminalDimensions } from "@opentui/react"
 import { useEffect, useState } from "react"
+import type { Theme } from "./theme.ts"
 
-/** Cyan diamond + bold title + dim subtitle, single-line (truncates). */
-export function Header({ title, subtitle }: { title: string; subtitle?: string }) {
+/** Accent diamond + bold title + dim subtitle, single-line (truncates). */
+export function Header({ title, subtitle, theme }: { title: string; subtitle?: string; theme: Theme }) {
   const { width: columns } = useTerminalDimensions();
   const avail = Math.max(0, columns - 4 - title.length - 2);
   let sub = subtitle ?? "";
@@ -11,7 +12,7 @@ export function Header({ title, subtitle }: { title: string; subtitle?: string }
   return (
     <box flexDirection="column" width={columns}>
       <box width={columns}>
-        <text fg="cyan" attributes={TextAttributes.BOLD}>◆ </text>
+        <text fg={theme.accent} attributes={TextAttributes.BOLD}>◆ </text>
         <text attributes={TextAttributes.BOLD}>{title}</text>
         {sub ? <text attributes={TextAttributes.DIM}>  {sub}</text> : null}
       </box>
@@ -21,7 +22,7 @@ export function Header({ title, subtitle }: { title: string; subtitle?: string }
 }
 
 /** Keybinding hint bar — truncated to terminal width. */
-export function KeyHint({ keys }: { keys: Array<[string, string]> }) {
+export function KeyHint({ keys, theme }: { keys: Array<[string, string]>; theme: Theme }) {
   const { width: columns } = useTerminalDimensions();
   const items = keys.map(([label, k]) => `${label} ${k}`).join("  ");
   const maxLen = columns - 2;

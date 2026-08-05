@@ -1,7 +1,8 @@
 import { TextAttributes } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
-import { useMemo, useState } from "react"
+import { useMemo } from "react"
 import { Header, KeyHint, useSelection } from "./components.tsx"
+import type { Theme } from "./theme.ts"
 import { tildeHome } from "./util.ts"
 import { TOOLS } from "../adapters/registry.ts"
 import type { AgentTool, SessionMeta } from "../adapters/types.ts"
@@ -27,14 +28,19 @@ export function groupByProject(sessions: SessionMeta[]): Array<{ project: string
 
 export function Home({
   sessionsByTool,
+  theme,
   onOpenProject,
   onOpenAll,
+  onSearch,
   onQuit,
   initialTool = "pi",
 }: {
   sessionsByTool: Record<AgentTool, SessionMeta[]>;
+  theme: Theme;
   onOpenProject: (tool: AgentTool, project: string) => void;
   onOpenAll: (tool: AgentTool) => void;
+  /** open fuzzy search scoped to the active tool. */
+  onSearch: (tool: AgentTool) => void;
   onQuit: () => void;
   initialTool?: AgentTool;
 }) {
@@ -47,8 +53,6 @@ export function Home({
   const groups = useMemo(() => groupByProject(sessions), [sessions]);
   const projSel = useSelection(groups.length + 1); // +1 for "all"
   const { width: columns, height: rows } = useTerminalDimensions();
-  const [search, setSearch] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
 
   // Border takes 2 chars (left+right). Padding takes 2 (1 each side).
   const borderPad = 4;
@@ -64,15 +68,6 @@ export function Home({
   };
 
   useKeyboard((key) => {
-    if (search !== null) {
-      if (key.name === "escape") { setSearch(null); }
-      else if (key.name === "return") { setSearch(null); }
-      else if (key.name === "backspace") { setQuery((q) => q.slice(0, -1)); }
-      else if (key.sequence && key.sequence.length === 1 && key.sequence.charCodeAt(0) >= 32) {
-        setQuery((q) => q + key.sequence);
-      }
-      return;
-    }
     if (key.name === "down" || key.name === "j") {
       // project pane scroll
       projSel.move(1);
@@ -93,8 +88,7 @@ export function Home({
     } else if (key.name === "g" && key.shift) {
       selectTool(1);
     } else if (key.name === "/") {
-      setSearch("");
-      setQuery("");
+      onSearch(activeTool.id);
     } else if (key.name === "q" || key.name === "escape") {
       if (!key.shift) onQuit();
     }
@@ -113,7 +107,7 @@ export function Home({
       <text
         key={t.id}
         attributes={sel ? TextAttributes.BOLD : TextAttributes.DIM}
-        fg={sel ? "cyan" : undefined}
+        fg={sel ? theme.accent : undefined}
       >
         {truncated}
       </text>
@@ -131,7 +125,7 @@ export function Home({
       <text
         key={g.project}
         attributes={sel ? TextAttributes.BOLD : TextAttributes.DIM}
-        fg={sel ? "cyan" : undefined}
+        fg={sel ? theme.accent : undefined}
       >
         {truncated}
       </text>
@@ -143,18 +137,19 @@ export function Home({
       <Header
         title="Agent Context Viewer"
         subtitle="how agents load context — system prompts · AGENTS.md · before/after per prompt"
+        theme={theme}
       />
       <box flexDirection="row" flexGrow={1}>
-        <box flexDirection="column" width={toolPaneWidth} borderStyle="rounded" borderColor="gray">
-          <text attributes={TextAttributes.BOLD} fg="gray"> AGENTS</text>
+        <box flexDirection="column" width={toolPaneWidth} borderStyle="rounded" borderColor={theme.border}>
+          <text attributes={TextAttributes.BOLD} fg={theme.toolResult}> AGENTS</text>
           {toolRows}
         </box>
-        <box flexDirection="column" width={projPaneWidth} borderStyle="rounded" borderColor="gray">
-          <text attributes={TextAttributes.BOLD} fg="gray"> PROJECTS — {activeTool.name}</text>
-          {projRows.length > 0 ? projRows : <text attributes={TextAttributes.DIM} fg="gray">(no sessions)</text>}
+        <box flexDirection="column" width={projPaneWidth} borderStyle="rounded" borderColor={theme.border}>
+          <text attributes={TextAttributes.BOLD} fg={theme.toolResult}> PROJECTS — {activeTool.name}</text>
+          {projRows.length > 0 ? projRows : <text attributes={TextAttributes.DIM} fg={theme.toolResult}>(no sessions)</text>}
         </box>
       </box>
-      <KeyHint keys={[["move", "j/k"], ["search", "/"], ["open", "Enter"], ["tool", "Tab/g/G"], ["back", "q"], ["quit app", "Q"]]} />
+      <KeyHint keys={[["move", "j/k"], ["search", "/"], ["open", "Enter"], ["tool", "Tab/g/G"], ["back", "q"], ["quit app", "Q"]]} theme={theme} />
     </box>
   );
 }

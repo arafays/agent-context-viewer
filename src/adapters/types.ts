@@ -35,6 +35,13 @@ export interface SessionMeta {
   tokens: { input: number; output: number; cacheRead: number; cacheWrite: number };
   compactionCount: number;
   customTypes: Array<{ type: string; count: number }>;
+  /**
+   * Cheaply-extracted searchable text for the fuzzy content index, populated
+   * at discovery time by adapters that can (opencode: SQL; others piggyback
+   * on their discovery parse). May be empty for sessions that weren't
+   * materialized during discovery.
+   */
+  searchText?: string;
 }
 
 /** A content block inside a message (tool-agnostic). */

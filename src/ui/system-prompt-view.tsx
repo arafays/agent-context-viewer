@@ -2,14 +2,17 @@ import { TextAttributes } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useMemo, useState } from "react"
 import { Header, KeyHint } from "./components.tsx"
+import type { Theme } from "./theme.ts"
 import { wordWrap } from "./util.ts"
 import type { AgentSession } from "../adapters/types.ts"
 
 export function SystemPromptView({
   session,
+  theme,
   onBack,
 }: {
   session: AgentSession;
+  theme: Theme;
   onBack: () => void;
 }) {
   const { width: columns, height: rows } = useTerminalDimensions();
@@ -47,13 +50,13 @@ export function SystemPromptView({
 
   return (
     <box flexDirection="column" width="100%" height={rows}>
-      <Header title="System prompt" subtitle={`${session.meta.id.slice(0, 8)}  ${info.reconstructed ? "reconstructed" : "exact"} · ${lines.length} lines`} />
+      <Header title="System prompt" subtitle={`${session.meta.id.slice(0, 8)}  ${info.reconstructed ? "reconstructed" : "exact"} · ${lines.length} lines`} theme={theme} />
       <box flexDirection="column" flexGrow={1} width={columns} paddingLeft={1}>
         {visible.map((l, i) => (
           <text key={start + i} attributes={TextAttributes.DIM}>{l || " "}</text>
         ))}
       </box>
-      <KeyHint keys={[["scroll", "j/k"], ["back", "q"], ["quit app", "Q"]]} />
+      <KeyHint keys={[["scroll", "j/k"], ["back", "q"], ["quit app", "Q"]]} theme={theme} />
     </box>
   );
 }

@@ -11,6 +11,7 @@
 import { readdirSync, statSync, existsSync, openSync, readSync, closeSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { SearchFileBuilder } from "../../engine/transcript-lines.ts";
 import type {
   AgentSession,
   ContextFile,
@@ -140,7 +141,7 @@ export function discoverSessions(): SessionMeta[] {
           : basename(path).replace(/^rollout-/, "").replace(/\.jsonl$/, "");
       const counts = countKinds(path);
       const project = cwd.split("/").filter(Boolean).pop() ?? "unknown";
-      metas.push({
+      const metaBase: SessionMeta = {
         tool: "codex",
         id,
         path,
@@ -158,6 +159,11 @@ export function discoverSessions(): SessionMeta[] {
         tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         compactionCount: 0,
         customTypes: [],
+      };
+      const searchText = buildSearchText(metaBase, readFileAll(path));
+      metas.push({
+        ...metaBase,
+        ...(searchText ? { searchText } : {}),
       });
     } catch {
       /* skip unreadable */
@@ -165,6 +171,35 @@ export function discoverSessions(): SessionMeta[] {
   }
   metas.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
   return metas;
+}
+
+/**
+ * Searchable text for the fuzzy index, in the header/content line format.
+ * Codex embeds AGENTS.md + skills as user-role messages; we skip those
+ * (noise for content search) and keep real prompts + assistant replies.
+ */
+function buildSearchText(meta: SessionMeta, text: string): string {
+  const b = SearchFileBuilder.start(meta);
+  let turn = 0;
+  for (const line of text.split("\n")) {
+    const ev = parseLine(line);
+    if (!ev) continue;
+    const p = (ev.payload ?? {}) as Record<string, unknown>;
+    if (ev.type !== "response_item" || p.type !== "message") continue;
+    const role = p.role as string | undefined;
+    const blocks = (p.content as Array<{ type?: string; text?: string }> | undefined) ?? [];
+    const t = blocks.map((x) => (typeof x.text === "string" ? x.text : "")).join("\n").trim();
+    if (!t) continue;
+    if (role === "user" && !t.startsWith("# AGENTS.md instructions for") && !t.trimStart().startsWith("<skill>")) {
+      b.emit(turn, "user", t);
+    } else if (role === "assistant") {
+      b.emit(turn, "assistant", t);
+    } else if (role === "developer") {
+      b.emit(turn, "developer", t);
+    }
+    if (role === "user") turn++;
+  }
+  return b.toString();
 }
 
 // ---------------------------------------------------------------------------

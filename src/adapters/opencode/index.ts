@@ -37,6 +37,7 @@ import type {
   UsageTotals,
 } from "../types.ts";
 import { loadProjectContextFiles } from "../../vendor/pi/context-files.ts";
+import { SearchFileBuilder } from "../../engine/transcript-lines.ts";
 
 let db: Database | null = null;
 
@@ -129,6 +130,86 @@ export function discoverSessions(): SessionMeta[] {
     )
     .all() as Array<Record<string, unknown>>;
 
+  // Cheap searchable text: user prompts + assistant replies (per design, tool
+  // output is excluded — it dominates the DB and is rarely what you search for).
+  // Format matches the search file (header/content pairs with [turn N]).
+  // One SQL join over message+part; no per-message query (the DB is ~5GB).
+  const searchTextBySession = new Map<string, string>();
+  try {
+    const textRows = d
+      .query(
+        `SELECT m.session_id, m.data AS mdata, p.data AS pdata
+         FROM message m
+         JOIN part p ON p.message_id = m.id
+         WHERE json_extract(m.data,'$.role') IN ('user','assistant')
+           AND json_extract(p.data,'$.type') = 'text'
+         ORDER BY m.time_created, p.time_created`,
+      )
+      .all() as Array<{ session_id: string; mdata: string; pdata: string }>;
+    const turnBySession = new Map<string, number>();
+    const buildersBySession = new Map<string, SearchFileBuilder>();
+    const sessionInfo = new Map<string, { directory: string; title: string }>();
+    for (const r of d.query(`SELECT id, directory, title FROM session`).all() as Array<{ id: string; directory?: unknown; title?: unknown }>) {
+      sessionInfo.set(r.id, {
+        directory: typeof r.directory === "string" ? r.directory : "",
+        title: typeof r.title === "string" ? r.title : "",
+      });
+    }
+    for (const r of textRows) {
+      let role: string;
+      try {
+        role = (JSON.parse(r.mdata) as { role?: string }).role ?? "";
+      } catch {
+        continue;
+      }
+      if (role !== "user" && role !== "assistant") continue;
+      let text: string;
+      try {
+        text = (JSON.parse(r.pdata) as { text?: string }).text ?? "";
+      } catch {
+        continue;
+      }
+      if (!text.trim()) continue;
+      const sessionId = r.session_id;
+      let b = buildersBySession.get(sessionId);
+      if (!b) {
+        const info = sessionInfo.get(sessionId) ?? { directory: "", title: "" };
+        const dummyMeta: SessionMeta = {
+          tool: "opencode",
+          id: sessionId,
+          path: sessionId,
+          cwd: info.directory,
+          project: projectLabel(info.directory),
+          startedAt: "",
+          updatedAt: "",
+          sizeBytes: 0,
+          messageCount: 0,
+          userMessages: 0,
+          assistantMessages: 0,
+          toolResults: 0,
+          tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          compactionCount: 0,
+          customTypes: [],
+          name: info.title && !info.title.startsWith("New session") ? info.title : undefined,
+          model: undefined,
+        };
+        b = SearchFileBuilder.start(dummyMeta);
+        buildersBySession.set(sessionId, b);
+      }
+      const turn = turnBySession.get(sessionId) ?? 0;
+      // A user message and its assistant reply share the turn; a new user
+      // message advances the turn counter.
+      b.emit(turn, role === "user" ? "user" : "assistant", text);
+      if (role === "user") turnBySession.set(sessionId, turn + 1);
+    }
+    for (const [sid, b] of buildersBySession) {
+      const s = b.toString();
+      if (s) searchTextBySession.set(sid, s);
+    }
+  } catch {
+    /* index stays empty for opencode */
+  }
+
   const metas: SessionMeta[] = [];
   for (const r of rows) {
     const id = String(r.id);
@@ -141,7 +222,7 @@ export function discoverSessions(): SessionMeta[] {
     const input = num(r.tokens_input);
     const output = num(r.tokens_output);
     const cacheRead = num(r.tokens_cache_read);
-    metas.push({
+    const meta: SessionMeta = {
       tool: "opencode",
       id,
       path: id,
@@ -160,7 +241,10 @@ export function discoverSessions(): SessionMeta[] {
       tokens: { input, output, cacheRead, cacheWrite: num(r.tokens_cache_write) },
       compactionCount: compCount,
       customTypes: compCount > 0 ? [{ type: "compaction", count: compCount }] : [],
-    });
+    };
+    const searchText = searchTextBySession.get(id);
+    if (searchText) meta.searchText = searchText;
+    metas.push(meta);
   }
   metas.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
   return metas;

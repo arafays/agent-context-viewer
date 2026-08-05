@@ -1,7 +1,7 @@
 import { TextAttributes } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
-import { useMemo, useState } from "react"
 import { Header, KeyHint, useSelection } from "./components.tsx"
+import type { Theme } from "./theme.ts"
 import { tildeHome, truncate } from "./util.ts"
 import type { AgentTool, SessionMeta } from "../adapters/types.ts"
 
@@ -9,30 +9,21 @@ export function SessionList({
   tool,
   project,
   sessions,
+  theme,
   onOpen,
   onBack,
+  onSearch,
 }: {
   tool: AgentTool;
   project: string | null;
   sessions: SessionMeta[];
+  theme: Theme;
   onOpen: (meta: SessionMeta) => void;
   onBack: () => void;
+  onSearch: () => void;
 }) {
   const { width: columns, height: rows } = useTerminalDimensions();
-  const [search, setSearch] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-
-  const filtered = useMemo(() => {
-    if (!query) return sessions;
-    const q = query.toLowerCase();
-    return sessions.filter(
-      (s) =>
-        (s.model ?? "").toLowerCase().includes(q) ||
-        (s.name ?? "").toLowerCase().includes(q) ||
-        s.id.toLowerCase().includes(q) ||
-        s.project.toLowerCase().includes(q),
-    );
-  }, [sessions, query]);
+  const filtered = sessions;
 
   const sel = useSelection(filtered.length);
 
@@ -47,15 +38,6 @@ export function SessionList({
   };
 
   useKeyboard((key) => {
-    if (search !== null) {
-      if (key.name === "escape") { setSearch(null); }
-      else if (key.name === "return") { setSearch(null); }
-      else if (key.name === "backspace") { setQuery((q) => q.slice(0, -1)); }
-      else if (key.sequence && key.sequence.length === 1 && key.sequence.charCodeAt(0) >= 32) {
-        setQuery((q) => q + key.sequence);
-      }
-      return;
-    }
     if (key.name === "down" || key.name === "j") sel.move(1);
     else if (key.name === "up" || key.name === "k") sel.move(-1);
     else if (key.name === "pageDown") sel.move(10);
@@ -65,13 +47,13 @@ export function SessionList({
     else if (key.name === "return") {
       const m = filtered[sel.selected];
       if (m) onOpen(m);
-    } else if (key.name === "/") { setSearch(""); setQuery(""); }
+    } else if (key.name === "/") { onSearch(); }
     else if ((key.name === "q" || key.name === "escape") && !key.shift) onBack();
   });
 
   const subtitle = project
-    ? `${project} · ${filtered.length} session${filtered.length === 1 ? "" : "s"}${query ? ` (filtered)` : ""}`
-    : `all ${toolName(tool)} sessions · ${filtered.length} session${filtered.length === 1 ? "" : "s"}${query ? ` (filtered)` : ""}`;
+    ? `${project} · ${filtered.length} session${filtered.length === 1 ? "" : "s"}`
+    : `all ${toolName(tool)} sessions · ${filtered.length} session${filtered.length === 1 ? "" : "s"}`;
 
   const viewportRows = Math.max(1, rows - 7);
   const half = Math.max(1, Math.floor(viewportRows / 2));
@@ -89,14 +71,14 @@ export function SessionList({
 
   return (
     <box flexDirection="column" width="100%" height={rows}>
-      <Header title={project ?? `All ${toolName(tool)} sessions`} subtitle={subtitle} />
+      <Header title={project ?? `All ${toolName(tool)} sessions`} subtitle={subtitle} theme={theme} />
       {visible.length === 0 ? null : (
-        <text fg="gray" attributes={TextAttributes.DIM}>
+        <text fg={theme.toolResult} attributes={TextAttributes.DIM}>
           {"  " + "MODEL".padEnd(modelWidth) + " " + "DATE".padStart(6) + " " + "MSGS".padStart(4) + " " + "IN".padStart(6) + " " + "CACHE".padStart(7) + "  PATH"}
         </text>
       )}
       {visible.length === 0 ? (
-        <text fg="gray" attributes={TextAttributes.DIM}>  (no sessions found)</text>
+        <text fg={theme.toolResult} attributes={TextAttributes.DIM}>  (no sessions found)</text>
       ) : (
         <box flexDirection="column" width={columns}>
           {visible.map((s, i) => {
@@ -125,7 +107,7 @@ export function SessionList({
               <text
                 key={s.id}
                 attributes={isSel ? TextAttributes.BOLD : TextAttributes.DIM}
-                fg={isSel ? "cyan" : undefined}
+                fg={isSel ? theme.accent : undefined}
               >
                 {truncated}
               </text>
@@ -133,7 +115,7 @@ export function SessionList({
           })}
         </box>
       )}
-      <KeyHint keys={[["scroll", "j/k"], ["search", "/"], ["open", "Enter"], ["back", "q"], ["quit app", "Q"]]} />
+      <KeyHint keys={[["scroll", "j/k"], ["search", "/"], ["open", "Enter"], ["back", "q"], ["quit app", "Q"]]} theme={theme} />
     </box>
   );
 }

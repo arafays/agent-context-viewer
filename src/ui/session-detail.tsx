@@ -1,8 +1,9 @@
 import { TextAttributes } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Header, KeyHint } from "./components.tsx"
 import { BlockReader, type ReaderContent } from "./reader.tsx"
+import type { Theme } from "./theme.ts"
 import { tildeHome, wordWrap } from "./util.ts"
 import type { AgentSession, ContentBlockView, NormalizedMessage, SessionEventView, SessionMeta, Turn } from "../adapters/types.ts"
 
@@ -39,24 +40,29 @@ interface LLine {
 /** A rendered (wrapped) transcript line. */
 interface RLine extends LLine { cont: boolean }
 
-const C = {
-  system: "blue",
-  user: "green",
-  thinking: "yellow",
-  assistant: "white",
-  toolUse: "cyan",
-  toolResult: "gray",
-  toolError: "red",
-  compaction: "magenta",
-  model: "blue",
-  custom: "magenta",
-  note: "gray",
-  hint: "gray",
-};
+/** Semantic color roles, resolved from the live terminal theme. */
+function C(t: Theme) {
+  return {
+    system: t.system,
+    user: t.user,
+    thinking: t.thinking,
+    assistant: t.assistant,
+    toolUse: t.toolUse,
+    toolResult: t.toolResult,
+    toolError: t.toolError,
+    compaction: t.compaction,
+    model: t.system,
+    custom: t.custom,
+    note: t.toolResult,
+    hint: t.toolResult,
+  };
+}
 
 export function SessionDetail({
   session,
   meta,
+  jump,
+  theme,
   onOpenContext,
   onOpenSysPrompt,
   onOpenFiles,
@@ -64,6 +70,9 @@ export function SessionDetail({
 }: {
   session: AgentSession;
   meta: SessionMeta;
+  /** from fuzzy search — open the transcript on this turn. */
+  jump?: { turn: number };
+  theme: Theme;
   onOpenContext: () => void;
   onOpenSysPrompt: () => void;
   onOpenFiles: () => void;
@@ -75,6 +84,7 @@ export function SessionDetail({
   const [reader, setReader] = useState<ReaderContent | null>(null);
 
   const llines: LLine[] = useMemo(() => {
+    const c = C(theme);
     const out: LLine[] = [];
     const spacer = (turn: number) => out.push({ text: "", kind: "spacer", turn, indent: 0 });
     // tag header for a block
@@ -87,8 +97,8 @@ export function SessionDetail({
     // leading system prompt — first jump target, expandable in the reader
     const sysPrompt = (session.contextInfo.systemPrompt ?? "").trim();
     if (sysPrompt) {
-      const expand = { title: "system prompt", body: sysPrompt, color: C.system };
-      tag(`system prompt${session.contextInfo.reconstructed ? " · reconstructed" : ""} · ${fmt(sysPrompt.length)} chars`, C.system, -1, "system", expand);
+      const expand = { title: "system prompt", body: sysPrompt, color: c.system };
+      tag(`system prompt${session.contextInfo.reconstructed ? " · reconstructed" : ""} · ${fmt(sysPrompt.length)} chars`, c.system, -1, "system", expand);
       spacer(-1);
     }
 
@@ -98,17 +108,17 @@ export function SessionDetail({
       const mode = turn.thinkingLevel ? ` · think:${turn.thinkingLevel}` : "";
       const reqs = turn.assistantCalls.length;
       const ctx = turn.usage.input + turn.usage.cacheRead;
-      tag(`turn ${turn.index} · ${model}${mode} · ${reqs} req${reqs !== 1 ? "s" : ""} · ctx ${fmt(ctx)}`, "cyan", turn.index, "header");
+      tag(`turn ${turn.index} · ${model}${mode} · ${reqs} req${reqs !== 1 ? "s" : ""} · ctx ${fmt(ctx)}`, c.system, turn.index, "header");
 
       // leading events
       if (turn.events.length) {
-        for (const e of turn.events) buildEvent(out, e, turn.index, tag, body);
+        for (const e of turn.events) buildEvent(out, e, turn.index, tag, body, c);
         spacer(turn.index);
       }
 
       // user prompt
       if (turn.userMessage) {
-        appendMessage(out, turn.userMessage, turn.index, tag, body);
+        appendMessage(out, turn.userMessage, turn.index, tag, body, c);
         spacer(turn.index);
       }
 
@@ -124,20 +134,20 @@ export function SessionDetail({
         const usage = cacheW > 0
           ? `in ${fmt(input)} · cache ${fmt(cache)} · cacheW ${fmt(cacheW)} · out ${fmt(output)}`
           : `in ${fmt(input)} · cache ${fmt(cache)} · out ${fmt(output)}`;
-        body(usage, "gray", true, turn.index, "usage");
+        body(usage, c.toolResult, true, turn.index, "usage");
         out.push({ text: "", kind: "spacer", turn: turn.index, indent: 0 });
 
         // thinking — inline preview is capped, but the expanded reader gets the full text
         const thinkFull = collectBlocks(call.blocks, (b) => b.kind === "thinking" || b.kind === "reasoning");
         const thinkTxt = thinkFull.slice(0, MAX_BLOCK_CHARS);
         if (thinkTxt.trim()) {
-          const expand = { title: "thinking", body: thinkFull, color: C.thinking };
+          const expand = { title: "thinking", body: thinkFull, color: c.thinking };
           if (showThinking) {
-            tag("thinking", C.thinking, turn.index, "thinking", expand);
-            for (const l of thinkTxt.split("\n")) body(l, C.thinking, true, turn.index, "thinking", expand);
+            tag("thinking", c.thinking, turn.index, "thinking", expand);
+            for (const l of thinkTxt.split("\n")) body(l, c.thinking, true, turn.index, "thinking", expand);
           } else {
             const preview = thinkFull.replace(/\s+/g, " ").trim().slice(0, 72);
-            tag(`thinking · ${preview}${thinkFull.length > 72 ? "…" : ""}`, C.thinking, turn.index, "thinking", expand);
+            tag(`thinking · ${preview}${thinkFull.length > 72 ? "…" : ""}`, c.thinking, turn.index, "thinking", expand);
           }
           out.push({ text: "", kind: "spacer", turn: turn.index, indent: 0 });
         }
@@ -146,9 +156,9 @@ export function SessionDetail({
         const textFull = collectBlocks(call.blocks, (b) => b.kind === "text");
         const textTxt = textFull.slice(0, MAX_BLOCK_CHARS);
         if (textTxt.trim()) {
-          const expand = { title: "assistant text", body: textFull, color: C.assistant };
-          tag("assistant", C.assistant, turn.index, "assistant", expand);
-          for (const l of textTxt.split("\n")) body(l, C.assistant, false, turn.index, "assistant", expand);
+          const expand = { title: "assistant text", body: textFull, color: c.assistant };
+          tag("assistant", c.assistant, turn.index, "assistant", expand);
+          for (const l of textTxt.split("\n")) body(l, c.assistant, false, turn.index, "assistant", expand);
           out.push({ text: "", kind: "spacer", turn: turn.index, indent: 0 });
         }
 
@@ -156,8 +166,8 @@ export function SessionDetail({
         for (const b of call.blocks) {
           if (b.kind !== "tool_use") continue;
           const inputPreview = b.input ? truncateVisual(JSON.stringify(b.input), 96) : "(no args)";
-          const expand = { title: `tool call · ${b.toolName ?? "tool"}`, lang: "json", body: prettyToolInput(b.input), color: "cyan" };
-          tag(`tool · call · ${b.toolName ?? "tool"}(${inputPreview})`, C.toolUse, turn.index, "toolUse", expand);
+          const expand = { title: `tool call · ${b.toolName ?? "tool"}`, lang: "json", body: prettyToolInput(b.input), color: c.toolUse };
+          tag(`tool · call · ${b.toolName ?? "tool"}(${inputPreview})`, c.toolUse, turn.index, "toolUse", expand);
         }
 
         // tool results — paired output of the actions. Inline preview is capped;
@@ -166,22 +176,22 @@ export function SessionDetail({
           const fullRaw = tr.blocks.map((b) => b.text ?? "").join("\n");
           const previewSrc = fullRaw.slice(0, TOOL_RESULT_FULL_CAP);
           const raw = previewSrc.split("\n");
-          const color = tr.isError ? C.toolError : C.toolResult;
+          const color = tr.isError ? c.toolError : c.toolResult;
           const expand = { title: `tool result · ${tr.toolName ?? "tool"}`, body: fullRaw, color };
           tag(`result${tr.isError ? " · error" : ""} · ${tr.toolName ?? "tool"}`, color, turn.index, "toolResult", expand);
           for (const l of raw.slice(0, TOOL_RESULT_PREVIEW_LINES)) body(l, color, true, turn.index, "toolResult", expand);
           const totalLines = fullRaw.split("\n").length;
           const more = totalLines - TOOL_RESULT_PREVIEW_LINES;
-          if (more > 0) body(`+${more} more line${more === 1 ? "" : "s"} — Enter to expand`, C.hint, true, turn.index, "hint", expand);
+          if (more > 0) body(`+${more} more line${more === 1 ? "" : "s"} — Enter to expand`, c.hint, true, turn.index, "hint", expand);
           out.push({ text: "", kind: "spacer", turn: turn.index, indent: 0 });
         }
       }
 
-      out.push({ text: "└─", color: "gray", dim: true, kind: "close", turn: turn.index, indent: 0 });
+      out.push({ text: "└─", color: c.toolResult, dim: true, kind: "close", turn: turn.index, indent: 0 });
       spacer(turn.index);
     }
     return out;
-  }, [session, showThinking]);
+  }, [session, showThinking, theme]);
 
   // wrap each logical line to its available width (prefix 2 + indent)
   const rLines: RLine[] = useMemo(() => {
@@ -206,6 +216,18 @@ export function SessionDetail({
     for (let i = 0; i < rLines.length; i++) if (rLines[i]?.isTag) out.push(i);
     return out;
   }, [rLines]);
+
+  // Fuzzy-search jump: place the cursor on the first tag line of the matched
+  // turn (turn headers are always tag lines, so the anchor exists).
+  const jumpApplied = useRef(false);
+  useEffect(() => {
+    if (!jump || jumpApplied.current) return;
+    const idx = anchors.findIndex((a) => rLines[a]?.turn === jump.turn);
+    if (idx >= 0) {
+      setAnchorIdx(idx);
+      jumpApplied.current = true;
+    }
+  }, [jump, anchors, rLines]);
 
   const cursor = anchors.length > 0 ? (anchors[Math.min(anchorIdx, anchors.length - 1)] ?? 0) : 0;
   const safeCursor = Math.min(cursor, Math.max(0, rLines.length - 1));
@@ -239,7 +261,7 @@ export function SessionDetail({
 
   return (
     <box flexDirection="column" width="100%" height={rows}>
-      <Header title={meta.name ?? meta.id.slice(0, 8)} subtitle={subtitle} />
+      <Header title={meta.name ?? meta.id.slice(0, 8)} subtitle={subtitle} theme={theme} />
       <box flexDirection="column" flexGrow={1} width={columns}>
         {visible.map((line, i) => {
           const absIdx = start + i;
@@ -271,11 +293,11 @@ export function SessionDetail({
         ["files", "f"],
         ["back", "q"],
         ["quit app", "Q"],
-      ]} />
+      ]} theme={theme} />
 
       {reader ? (
-        <box position="absolute" width="100%" height={rows} top={0} left={0} backgroundColor="#0b0b0b">
-          <BlockReader content={reader} onBack={() => setReader(null)} />
+        <box position="absolute" width="100%" height={rows} top={0} left={0} backgroundColor={theme.defaultBg ?? (theme.dark ? "#0b0b0b" : "#ffffff")}>
+          <BlockReader content={reader} theme={theme} onBack={() => setReader(null)} />
         </box>
       ) : null}
     </box>
@@ -322,41 +344,41 @@ function prettyToolInput(input: unknown): string {
 type TagFn = (text: string, color: string, turn: number, kind: Kind, expand?: ReaderContent) => void;
 type BodyFn = (text: string, color: string, dim: boolean, turn: number, kind: Kind, expand?: ReaderContent) => void;
 
-function appendMessage(out: LLine[], msg: NormalizedMessage, turnIdx: number, tag: TagFn, body: BodyFn) {
+function appendMessage(out: LLine[], msg: NormalizedMessage, turnIdx: number, tag: TagFn, body: BodyFn, c: ReturnType<typeof C>) {
   const full = msg.blocks.filter((b) => b.kind === "text").map((b) => b.text ?? "").join("\n").trim();
   const txt = full.slice(0, MAX_BLOCK_CHARS);
   const isUser = msg.role === "user";
-  const color = isUser ? C.user : C.note;
+  const color = isUser ? c.user : c.note;
   const expand = { title: isUser ? "user message" : "message", body: full, color };
   tag(isUser ? "user · prompt" : "message", color, turnIdx, isUser ? "user" : "note", expand);
-  if (!txt) { body("(empty)", "gray", true, turnIdx, isUser ? "user" : "note", expand); return; }
+  if (!txt) { body("(empty)", c.note, true, turnIdx, isUser ? "user" : "note", expand); return; }
   for (const l of txt.split("\n")) body(l, color, !isUser, turnIdx, isUser ? "user" : "note", expand);
 }
 
-function buildEvent(out: LLine[], e: SessionEventView, turn: number, tag: TagFn, body: BodyFn) {
+function buildEvent(out: LLine[], e: SessionEventView, turn: number, tag: TagFn, body: BodyFn, c: ReturnType<typeof C>) {
   const detail = e.detail ?? "";
   const fullBody = typeof (e as { body?: string }).body === "string" ? (e as { body?: string }).body as string : detail;
   if (e.kind === "compaction") {
-    const expand = { title: "compaction", body: fullBody, color: C.compaction };
-    tag("compaction", C.compaction, turn, "compaction", expand);
-    body(detail, C.compaction, true, turn, "compaction", expand);
+    const expand = { title: "compaction", body: fullBody, color: c.compaction };
+    tag("compaction", c.compaction, turn, "compaction", expand);
+    body(detail, c.compaction, true, turn, "compaction", expand);
   } else if (e.kind === "model_change") {
-    tag("model change", C.model, turn, "model");
-    body(`model → ${detail}`, C.model, true, turn, "model");
+    tag("model change", c.model, turn, "model");
+    body(`model → ${detail}`, c.model, true, turn, "model");
   } else if (e.kind === "thinking_level_change") {
-    tag("thinking level", C.model, turn, "thinkingLvl");
-    body(`thinking → ${detail}`, C.model, true, turn, "thinkingLvl");
+    tag("thinking level", c.model, turn, "thinkingLvl");
+    body(`thinking → ${detail}`, c.model, true, turn, "thinkingLvl");
   } else if (e.kind === "branch_summary") {
-    const expand = { title: "branch summary", body: fullBody, color: C.note };
-    tag("branch summary", C.note, turn, "note", expand);
-    body(detail, C.note, true, turn, "note", expand);
+    const expand = { title: "branch summary", body: fullBody, color: c.note };
+    tag("branch summary", c.note, turn, "note", expand);
+    body(detail, c.note, true, turn, "note", expand);
   } else if (e.kind === "label") {
-    tag("label", C.note, turn, "note");
-    body(detail, C.note, true, turn, "note");
+    tag("label", c.note, turn, "note");
+    body(detail, c.note, true, turn, "note");
   } else {
-    const expand = { title: `event · ${classifyCustom(detail)}`, body: fullBody, color: C.custom };
-    tag(`event · ${classifyCustom(detail)}`, C.custom, turn, "custom", expand);
-    body(detail, C.custom, true, turn, "custom", expand);
+    const expand = { title: `event · ${classifyCustom(detail)}`, body: fullBody, color: c.custom };
+    tag(`event · ${classifyCustom(detail)}`, c.custom, turn, "custom", expand);
+    body(detail, c.custom, true, turn, "custom", expand);
   }
 }
 

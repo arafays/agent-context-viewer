@@ -17,6 +17,7 @@ import type {
 } from "../types.ts";
 import { buildContextPoints, buildSessionContextInfo } from "./context.ts";
 import { loadEntriesFromFile, buildSessionContext } from "../../vendor/pi/session-context.ts";
+import { SearchFileBuilder } from "../../engine/transcript-lines.ts";
 import type { AgentMessage, FileEntry, SessionEntry } from "../../vendor/pi/types.ts";
 
 const SESSION_HEADER_SCAN_BYTES = 64 * 1024;
@@ -136,10 +137,69 @@ function metaFromHeader(
   try {
     const entries = loadEntriesFromFile(path) as SessionEntry[];
     const stats = summarizeEntries(entries);
-    return { ...base, ...stats };
+    const searchText = buildSearchText(base, entries);
+    return { ...base, ...stats, ...(searchText ? { searchText } : {}) };
   } catch {
     return base;
   }
+}
+
+/**
+ * Cheap searchable text for the fuzzy index, in the header/content line format
+ * (`[tool] [project] [model] [date] [turn N] tag` / collapsed content). Built
+ * during discovery's single parse pass so we never need loadSession for it.
+ */
+function buildSearchText(meta: SessionMeta, entries: SessionEntry[]): string {
+  const b = SearchFileBuilder.start(meta);
+  let turn = 0;
+  let currentTag = "";
+  let currentContent: string[] = [];
+  const flush = () => {
+    if (currentContent.length > 0) {
+      b.emit(turn, currentTag, currentContent.join("\n"));
+    }
+    currentContent = [];
+  };
+  for (const entry of entries) {
+    if (entry.type !== "message") continue;
+    const msg = entry.message as AgentMessage;
+    const role = msg.role;
+    const text = (() => {
+      if (typeof msg.content === "string") return msg.content;
+      if (Array.isArray(msg.content)) {
+        return msg.content
+          .map((c) => {
+            const cb = c as { type?: string; text?: string; thinking?: string; name?: string; input?: unknown; content?: unknown };
+            if (cb.type === "text") return cb.text ?? "";
+            if (cb.type === "thinking") return cb.thinking ?? cb.text ?? "";
+            if (cb.type === "tool_use") return `tool call: ${cb.name ?? "tool"} ${JSON.stringify(cb.input ?? "")}`;
+            if (cb.type === "tool_result") {
+              const inner = Array.isArray(cb.content)
+                ? (cb.content as Array<{ text?: string }>).map((x) => x.text ?? "").join("\n")
+                : typeof cb.content === "string" ? cb.content : "";
+              return inner;
+            }
+            return "";
+          })
+          .join("\n");
+      }
+      return "";
+    })();
+    if (role === "user" || role === "assistant") {
+      flush();
+      currentTag = role === "user" ? "user" : "assistant";
+      currentContent = [text];
+    } else if (role === "toolResult") {
+      if (text) b.emit(turn, "tool result", text);
+    } else if (msg.role === "bashExecution") {
+      const cmd = typeof msg.command === "string" ? msg.command : "";
+      const out = typeof msg.output === "string" ? msg.output : "";
+      b.emit(turn, "bash exec", `$$ ${cmd}\n${out}`);
+    }
+    if (role === "user") turn++;
+  }
+  flush();
+  return b.toString();
 }
 
 function summarizeEntries(entries: SessionEntry[]) {

@@ -2,6 +2,7 @@ import { TextAttributes } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useMemo, useState } from "react"
 import { Header, KeyHint } from "./components.tsx"
+import type { Theme } from "./theme.ts"
 import { wordWrap } from "./util.ts"
 
 /** Payload for the focused block reader. */
@@ -20,7 +21,7 @@ export interface ReaderContent {
  * scrollable with a visible cursor (vim-style j/k, g/G, PgUp/PgDn, Home/End).
  * Rendered as an opaque overlay by the parent.
  */
-export function BlockReader({ content, onBack }: { content: ReaderContent; onBack: () => void }) {
+export function BlockReader({ content, theme, onBack }: { content: ReaderContent; theme: Theme; onBack: () => void }) {
   const { width: columns, height: rows } = useTerminalDimensions();
   const [cursor, setCursor] = useState(0);
 
@@ -65,8 +66,8 @@ export function BlockReader({ content, onBack }: { content: ReaderContent; onBac
   const hintTitle = header.length > maxHintWidth ? header.slice(0, Math.max(1, maxHintWidth - 1)) + "…" : header;
 
   return (
-    <box flexDirection="column" width="100%" height={rows} backgroundColor="#0b0b0b">
-      <Header title={hintTitle} subtitle={subtitle} />
+    <box flexDirection="column" width="100%" height={rows} backgroundColor={theme.defaultBg ?? (theme.dark ? "#0b0b0b" : "#ffffff")}>
+      <Header title={hintTitle} subtitle={subtitle} theme={theme} />
       <box flexDirection="column" flexGrow={1} width={columns} paddingLeft={1} paddingRight={1}>
         {visible.map((l, i) => {
           const isCursor = i === cursorRow;
@@ -74,7 +75,7 @@ export function BlockReader({ content, onBack }: { content: ReaderContent; onBac
           return (
             <text
               key={start + i}
-              fg={content.color}
+              fg={content.color ?? theme.fg}
               attributes={(isCursor ? TextAttributes.BOLD : 0) | TextAttributes.DIM}
             >
               {prefix + (l.text || "")}
@@ -88,7 +89,7 @@ export function BlockReader({ content, onBack }: { content: ReaderContent; onBac
         ["top/bottom", "g/G / Home/End"],
         ["back", "q/Esc"],
         ["quit", "Q"],
-      ]} />
+      ]} theme={theme} />
     </box>
   );
 }

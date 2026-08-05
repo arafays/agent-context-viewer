@@ -28,11 +28,14 @@ src/
     tokens.ts           # Token formatting, tokenBar, relativeTime
     turns.ts            # TurnSummary, sessionTokenTotals
     context-diff.ts     # buildRequestSteps, sessionCurve, diff before/after messages
+    transcript-lines.ts # Sessions → single-line searchable units ([tool] [proj] [model] [date] [turn N] tag)
+    search-index.ts     # fff-backed content index (~/.cache/acv/), fuzzy grep wrapper
   ui/
     components.tsx      # Header, KeyHint, Spinner, useSelection
     home.tsx            # Two-pane tool picker + project list
-    session-list.tsx    # Searchable session list
+    session-list.tsx    # Session list
     session-detail.tsx  # Full transcript viewer with collapsible thinking
+    search-panel.tsx    # Fuzzy content search overlay (fff), jump-to-turn on Enter
     context-view.tsx    # Token curve + before/after snapshot diff
     system-prompt-view.tsx
     context-files-view.tsx
@@ -45,6 +48,9 @@ src/
 1. **Adapters** produce a normalized `AgentSession` (types.ts) and are registered in `registry.ts`.
    - `discoverSessions(tool)` → `SessionMeta[]`
    - `loadSession(meta)` → `AgentSession`
+   - Discovery also populates `meta.searchText` (cheap, structured header/content
+     lines via `SearchFileBuilder` in `engine/transcript-lines.ts`) so the fuzzy
+     index never needs a full `loadSession`.
 2. **Context reconstruction** (Pi, opencode, claude) uses vendored `buildSystemPrompt`,
    `loadProjectContextFiles`, and `buildSessionContext` from `vendor/pi/`. Codex stores
    everything inline, so `reconstructed: false`.
@@ -54,7 +60,14 @@ src/
 4. **UI screens** are pure functional components that receive everything via props
    (no async data fetching — adapters are synchronous). Navigation via `useKeyboard`.
 5. **Typecheck must pass** before any commit. Run `bun run typecheck`.
-6. **Keep deps minimal**: `@opentui/core`, `@opentui/react`, react, bun:sqlite. No other deps.
+6. **Keep deps minimal**: `@opentui/core`, `@opentui/react`, react, bun:sqlite,
+   `@ff-labs/fff-bun` (fuzzy search). No other deps.
+7. **Fuzzy search**: `engine/search-index.ts` materializes each session to a text
+   file in `~/.cache/acv/<tool>/<project>/<id>.txt` (header line + content line
+   per message — odd lines headers with `[turn N]`, even content), indexes the
+   dir with `FileFinder`, and greps `mode: "fuzzy"`. Never pass an empty array
+   for a tool you didn't discover — the stale-file cleanup treats enumerated
+   tools as authoritative.
 
 ## Vendored Pi code
 
@@ -67,7 +80,7 @@ The extractor script `scripts/extract-tool-snippets.ts` regenerates `src/vendor/
 | Key       | Action              |
 |-----------|---------------------|
 | j/k       | scroll / move       |
-| /         | search              |
+| /         | fuzzy search (fff)  |
 | Enter     | open / select       |
 | Tab/g/G   | switch tool         |
 | c         | context view        |

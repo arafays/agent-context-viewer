@@ -10,7 +10,7 @@ Built with **Bun + OpenTUI + React**. Ships **four** adapters:
 - **Codex** — system prompt + AGENTS.md stored inline (exact, no reconstruction)
 - **Claude Code** — exact per-request usage/tokens; system prompt not persisted,
   context files reconstructed; commands shown as ⌘ lines
-- **opencode** — exact per-request usage from SQLite (952 sessions); compaction
+- **opencode** — exact per-request usage from SQLite (1548 sessions); compaction
   tracking with history cutoff (like Pi's firstKeptEntry); system prompt
   reconstructed from global + project AGENTS.md
 
@@ -72,6 +72,7 @@ before/after story is byte-exact.
 | --- | --- | --- |
 | Home | — | agent tools (Pi, Codex, Claude Code, opencode, …) + projects with session counts and token totals |
 | Session list | `Enter` | searchable sessions: model, started, msgs, input/cache tokens, ⚒ compaction count |
+| Fuzzy search | `/` | typo-tolerant content search over all sessions (fff), jump-to-turn on Enter |
 | Transcript | `Enter` | full session: user prompts, thinking, tool calls + results, model changes, custom events, per-request token usage |
 | Context view | `c` | token curve + before/after diff + context snapshot per request |
 | System prompt | `s` | reconstructed system prompt (tools, guidelines, skills, context files) |
@@ -83,12 +84,30 @@ before/after story is byte-exact.
 ```
 j / k        move / scroll            PgUp / PgDn   page scroll
 ↑ ↓          move                     Enter         open session / toggle snapshots
-Tab or g / G switch agent tool (home) /             search / filter
+Tab or g / G switch agent tool (home) /             fuzzy search
 c            context view             s             system prompt view
 f            context files view       d / v         toggle context snapshots
 t            toggle thinking blocks   ?             help
 q / Esc      back / quit
 ```
+
+## Fuzzy content search
+
+Press `/` anywhere to open a **fuzzy content search** over every session (powered
+by [fff](https://github.com/dmtrKovalenko/fff), a Rust-core fuzzy-search
+library). It is typo-resistant, so `openroutr balnce` finds the session that
+checked your OpenRouter balance.
+
+- Searches **session content** (user prompts, assistant replies, thinking,
+  tool calls/results) plus metadata — not just titles.
+- Results are scoped to the current agent tool (on the home screen, the
+  highlighted tool).
+- `Enter` on a result opens the transcript **jumped to the matching turn**.
+- The index is built once from a per-session text cache (`~/.cache/acv/`,
+  rebuilt automatically when sessions change) and reuses it on later launches.
+
+> opencode sessions index **user + assistant text** (not tool output), which
+> keeps the 5GB DB fast to index while covering prompt/reply search.
 
 ## Install & run
 
@@ -191,10 +210,15 @@ src/
     context-diff.ts before/after diff, compaction markers, token curve (uses each
                     point's own contextTokens — adapters define full-context metric)
     tokens.ts       token formatting, bars, relative time
+    transcript-lines.ts  flatten sessions to single-line searchable units
+                    (header `[tool] [project] [model] [date] [turn N] tag` + content)
+    search-index.ts fff-backed content index: per-session cache files in
+                    ~/.cache/acv/, fuzzy grep wrapper, stale cleanup
   vendor/pi/        vendored Pi internals (MIT) — session-context, system-prompt,
                     context-files, messages, tool-snippets (generated)
   ui/               home, session-list, session-detail, context-view,
-                    system-prompt-view, context-files-view, components
+                    system-prompt-view, context-files-view, search-panel,
+                    components
   app.tsx           screen routing + help
 scripts/
   extract-tool-snippets.ts  regenerates vendor/pi/tool-snippets.ts from installed pi
@@ -219,13 +243,9 @@ registering it in `registry.ts` — the renderer is shared.
 - [x] Pi adapter with per-prompt before/after context
 - [x] Codex adapter — exact context (system prompt inline), no reconstruction
 - [x] Claude Code adapter — exact per-request usage; system prompt not persisted
-- [x] opencode adapter — SQLite with 952 sessions; exact per-request tokens,
+- [x] opencode adapter — SQLite with 1548 sessions; exact per-request tokens,
   compaction tracking with history cutoff (truthful +N/−M diff)
-- [ ] opencode (`~/.local/share/opencode/` SQLite)
-- [ ] command-code (`~/.commandcode/projects/`)
-- [ ] Cursor / VS Code Copilot (SQLite stores)
-- [ ] opencode (`~/.local/share/opencode/` SQLite)
-- [ ] Codex (`~/.codex/sessions/` — system prompt stored inline)
+- [x] Fuzzy content search across all sessions (fff), with jump-to-turn
 - [ ] command-code (`~/.commandcode/projects/`)
 - [ ] Cursor / VS Code Copilot (SQLite stores)
 

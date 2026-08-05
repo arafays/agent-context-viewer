@@ -2,14 +2,17 @@ import { TextAttributes } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useEffect, useMemo, useState } from "react"
 import { Header, KeyHint, useSelection } from "./components.tsx"
+import type { Theme } from "./theme.ts"
 import { tildeHome, wordWrap } from "./util.ts"
 import type { AgentSession } from "../adapters/types.ts"
 
 export function ContextFilesView({
   session,
+  theme,
   onBack,
 }: {
   session: AgentSession;
+  theme: Theme;
   onBack: () => void;
 }) {
   const { width: columns, height: rows } = useTerminalDimensions();
@@ -60,22 +63,22 @@ export function ContextFilesView({
 
   return (
     <box flexDirection="column" width="100%" height={rows}>
-      <Header title="Context files" subtitle={`${session.meta.id.slice(0, 8)}  ${files.length} file${files.length === 1 ? "" : "s"}`} />
+      <Header title="Context files" subtitle={`${session.meta.id.slice(0, 8)}  ${files.length} file${files.length === 1 ? "" : "s"}`} theme={theme} />
       <box flexDirection="row" flexGrow={1}>
-        <box flexDirection="column" width={filePaneWidth} borderStyle="rounded" borderColor="gray" padding={1}>
-          <text attributes={TextAttributes.BOLD} fg="gray"> FILES</text>
+        <box flexDirection="column" width={filePaneWidth} borderStyle="rounded" borderColor={theme.border} padding={1}>
+          <text attributes={TextAttributes.BOLD} fg={theme.toolResult}> FILES</text>
           {fileLines.map((f, i) => (
             <text
               key={i}
               attributes={f.sel ? TextAttributes.BOLD : TextAttributes.DIM}
-              fg={f.sel ? "cyan" : undefined}
+              fg={f.sel ? theme.accent : undefined}
             >
               {f.text}
             </text>
           ))}
         </box>
-        <box flexDirection="column" width={contentPaneWidth} borderStyle="rounded" borderColor="gray" padding={1}>
-          <text attributes={TextAttributes.BOLD} fg="gray"> {tildeHome(selectedFile?.path ?? "(select a file)")}</text>
+        <box flexDirection="column" width={contentPaneWidth} borderStyle="rounded" borderColor={theme.border} padding={1}>
+          <text attributes={TextAttributes.BOLD} fg={theme.toolResult}> {tildeHome(selectedFile?.path ?? "(select a file)")}</text>
           {selectedFile ? (
             <box flexDirection="column" flexGrow={1}>
               {visibleContent.map((l, i) => (
@@ -83,11 +86,11 @@ export function ContextFilesView({
               ))}
             </box>
           ) : (
-            <text fg="gray" attributes={TextAttributes.DIM}>select a file to view its content</text>
+            <text fg={theme.toolResult} attributes={TextAttributes.DIM}>select a file to view its content</text>
           )}
         </box>
       </box>
-      <KeyHint keys={[["scroll files", "j/k"], ["back", "q"], ["quit app", "Q"]]} />
+      <KeyHint keys={[["scroll files", "j/k"], ["back", "q"], ["quit app", "Q"]]} theme={theme} />
     </box>
   );
 }

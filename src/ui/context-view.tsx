@@ -3,13 +3,16 @@ import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useMemo, useState } from "react"
 import { Header, KeyHint, useSelection } from "./components.tsx"
 import { buildRequestSteps, sessionCurve, type RequestStep } from "../engine/context-diff.ts"
+import type { Theme } from "./theme.ts"
 import type { AgentSession, NormalizedMessage } from "../adapters/types.ts"
 
 export function ContextView({
   session,
+  theme,
   onBack,
 }: {
   session: AgentSession;
+  theme: Theme;
   onBack: () => void;
 }) {
   const { width: columns, height: rows } = useTerminalDimensions();
@@ -101,19 +104,19 @@ export function ContextView({
         .slice(0, 180);
       const added = step.added.includes(m);
       if (m.role === "compactionSummary" || m.role === "branchSummary") {
-        out.push({ text: `╒ summary: ${String(m.summary ?? "").slice(0, 180)}`, color: "yellow", dim: false, added });
+        out.push({ text: `╒ summary: ${String(m.summary ?? "").slice(0, 180)}`, color: theme.warning, dim: false, added });
       } else if (m.role === "custom") {
-        out.push({ text: `◈ custom ${m.customType ?? ""}`, color: "gray", dim: true, added });
+        out.push({ text: `◈ custom ${m.customType ?? ""}`, color: theme.toolResult, dim: true, added });
       } else if (m.role === "toolResult") {
-        out.push({ text: `↩ ${m.toolName ?? "tool"}${m.isError ? " (error)" : ""}: ${text.slice(0, 140)}`, color: "gray", dim: true, added });
+        out.push({ text: `↩ ${m.toolName ?? "tool"}${m.isError ? " (error)" : ""}: ${text.slice(0, 140)}`, color: theme.toolResult, dim: true, added });
       } else if (m.role === "developer") {
-        out.push({ text: `sys: ${text.slice(0, 140) || "(empty)"}`, color: "gray", dim: true, added });
+        out.push({ text: `sys: ${text.slice(0, 140) || "(empty)"}`, color: theme.toolResult, dim: true, added });
       } else {
-        out.push({ text: `${m.role}: ${text || "(empty)"}`, color: added ? "green" : "white", dim: !added, added });
+        out.push({ text: `${m.role}: ${text || "(empty)"}`, color: added ? theme.user : theme.fg, dim: !added, added });
       }
     }
     return out;
-  }, [step]);
+  }, [step, theme]);
 
   const viewportRows = Math.max(1, rows - 10);
   const halfCurve = Math.max(1, Math.floor(viewportRows / 2));
@@ -124,23 +127,23 @@ export function ContextView({
 
   return (
     <box flexDirection="column" width="100%" height={rows}>
-      <Header title={`Context — ${session.meta.id.slice(0, 8)}`} subtitle={`${session.meta.cwd || session.meta.project} · ${steps.length} LLM requests`} />
+      <Header title={`Context — ${session.meta.id.slice(0, 8)}`} subtitle={`${session.meta.cwd || session.meta.project} · ${steps.length} LLM requests`} theme={theme} />
       <box flexDirection="column" flexGrow={1} width={columns}>
         {/* Curve */}
         <box flexDirection="column" width={columns}>
-          <text attributes={TextAttributes.BOLD} fg="gray">TOKENS PER REQUEST (input+cacheRead) — max {fmt(maxCtx)}</text>
+          <text attributes={TextAttributes.BOLD} fg={theme.toolResult}>TOKENS PER REQUEST (input+cacheRead) — max {fmt(maxCtx)}</text>
           {visibleCurve.map((c) => (
-            <text key={c.requestIndex} fg={c.compacted ? "yellow" : undefined} attributes={c.requestIndex === reqSel.selected ? TextAttributes.BOLD : TextAttributes.DIM}>
+            <text key={c.requestIndex} fg={c.compacted ? theme.warning : undefined} attributes={c.requestIndex === reqSel.selected ? TextAttributes.BOLD : TextAttributes.DIM}>
               {c.requestIndex === reqSel.selected ? ">" : " "} {c.text}
             </text>
           ))}
         </box>
         {/* Detail pane */}
-        <box flexDirection="column" borderStyle="rounded" borderColor="gray" padding={1} width={columns}>
+        <box flexDirection="column" borderStyle="rounded" borderColor={theme.border} padding={1} width={columns}>
           {detailLines.map((l, i) => {
             const truncated = l.length > maxLineWidth ? l.slice(0, maxLineWidth - 1) + "…" : l;
             return (
-              <text key={i} fg={l.startsWith("╒") ? "yellow" : l.startsWith("  cacheRead") ? "yellow" : undefined} attributes={l.startsWith("+") ? TextAttributes.BOLD : TextAttributes.DIM}>
+              <text key={i} fg={l.startsWith("╒") ? theme.warning : l.startsWith("  cacheRead") ? theme.warning : undefined} attributes={l.startsWith("+") ? TextAttributes.BOLD : TextAttributes.DIM}>
                 {truncated}
               </text>
             );
@@ -169,7 +172,7 @@ export function ContextView({
         ["system pr", "s"],
         ["back", "q"],
         ["quit app", "Q"],
-      ]} />
+      ]} theme={theme} />
     </box>
   );
 }

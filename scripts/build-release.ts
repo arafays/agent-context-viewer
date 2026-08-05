@@ -26,6 +26,9 @@ const result = await Bun.build({
   define: {
     "process.env.OPENTUI_LIBC": JSON.stringify("glibc"),
     "process.env.ACV_VERSION": JSON.stringify(version),
+    // fff (search) detects libc at build time for its native binary; Arch and
+    // the release targets are glibc, so pin "gnu" so the right .so is embedded.
+    "FFF_LIBC": JSON.stringify("gnu"),
   },
   minify: true,
 })

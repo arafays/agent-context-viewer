@@ -29,6 +29,7 @@ import type {
   UsageTotals,
 } from "../types.ts";
 import { loadProjectContextFiles } from "../../vendor/pi/context-files.ts";
+import { SearchFileBuilder } from "../../engine/transcript-lines.ts";
 
 const SCAN_BYTES = 64 * 1024;
 const zeroUsage = (): UsageTotals => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 });
@@ -160,6 +161,27 @@ export function discoverSessions(): SessionMeta[] {
       let title: string | undefined;
       const tokens = zeroUsage();
       const text = readAll(path);
+      const metaBase: SessionMeta = {
+        tool: "claude",
+        id,
+        path,
+        cwd,
+        project,
+        startedAt: ts,
+        updatedAt: st.mtime.toISOString(),
+        sizeBytes: st.size,
+        thinkingLevel: undefined,
+        messageCount: 0,
+        userMessages: 0,
+        assistantMessages: 0,
+        toolResults: 0,
+        tokens,
+        compactionCount: 0,
+        customTypes: [],
+        model: undefined,
+        name: undefined,
+      };
+      const searchBuilder = SearchFileBuilder.start(metaBase);
       for (const line of text.split("\n")) {
         const o = parseLine(line);
         if (!o) continue;
@@ -174,6 +196,21 @@ export function discoverSessions(): SessionMeta[] {
             tokens.cacheRead += num(u.cache_read_input_tokens);
             tokens.cacheWrite += num(u.cache_creation_input_tokens);
           }
+          // assistant text (content may be a string or blocks; a single
+          // assistant entry is one LLM message → one search unit)
+          const content = o.message?.content;
+          if (typeof content === "string" && content.trim()) {
+            searchBuilder.emit(assistant - 1, "assistant", content);
+          } else if (Array.isArray(content)) {
+            const parts: string[] = [];
+            for (const b of content as CBlock[]) {
+              if (b.type === "text" && b.text) parts.push(b.text);
+              else if (b.type === "thinking" && (b.thinking || b.text)) parts.push(b.thinking || b.text || "");
+              else if (b.type === "tool_use") parts.push(`tool call: ${b.name ?? "tool"} ${JSON.stringify(b.input ?? "")}`);
+            }
+            const joined = parts.join("\n").trim();
+            if (joined) searchBuilder.emit(assistant - 1, "assistant", joined);
+          }
         } else if (o.type === "ai-title" && typeof o.aiTitle === "string" && o.aiTitle.trim() && !title) {
           title = o.aiTitle.trim();
         } else if (o.type === "user" && !o.isMeta && !o.isSidechain) {
@@ -182,10 +219,33 @@ export function discoverSessions(): SessionMeta[] {
           const content = o.message?.content;
           if (Array.isArray(content) && content.some((b) => (b as { type?: string }).type === "tool_result")) {
             toolResults++;
+            // tool result text → searchable
+            const parts: string[] = [];
+            for (const b of content as CBlock[]) {
+              if (b.type === "text" && b.text) parts.push(b.text);
+              else if (b.type === "tool_result") {
+                const inner = Array.isArray(b.content)
+                  ? (b.content as Array<{ type?: string; text?: string }>).map((x) => x.text ?? "").join("\n")
+                  : typeof b.content === "string" ? b.content : "";
+                if (inner) parts.push(inner);
+              }
+            }
+            const joined = parts.join("\n").trim();
+            if (joined) searchBuilder.emit(user - 1, "tool result", joined);
+          } else if (typeof content === "string" && content.trim()) {
+            searchBuilder.emit(user - 1, "user", content);
+          } else if (Array.isArray(content)) {
+            const parts: string[] = [];
+            for (const b of content as CBlock[]) {
+              if (b.type === "text" && b.text) parts.push(b.text);
+            }
+            const joined = parts.join("\n").trim();
+            if (joined) searchBuilder.emit(user - 1, "user", joined);
           }
         }
       }
       tokens.total = tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite;
+      const searchText = searchBuilder.toString();
 
       metas.push({
         tool: "claude",
@@ -206,6 +266,7 @@ export function discoverSessions(): SessionMeta[] {
         customTypes: [],
         model: lastModel,
         name: title ?? project,
+        ...(searchText ? { searchText } : {}),
       });
     } catch {
       /* skip unreadable */
