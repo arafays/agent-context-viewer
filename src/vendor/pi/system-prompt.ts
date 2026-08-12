@@ -5,16 +5,16 @@
  * Docs paths are resolved against the installed pi package at runtime.
  * See NOTE.md in this directory.
  */
-import { existsSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import type { ContextFile } from "./context-files.ts";
+import { existsSync, readdirSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
+import type { ContextFile } from "./context-files.ts"
 
 export interface Skill {
-  name: string;
-  description: string;
-  filePath: string;
-  disableModelInvocation?: boolean;
+  name: string
+  description: string
+  filePath: string
+  disableModelInvocation?: boolean
 }
 
 function escapeXml(str: string): string {
@@ -23,31 +23,31 @@ function escapeXml(str: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
+    .replace(/'/g, "&apos;")
 }
 
 /** Vendored formatSkillsForPrompt (dist/core/skills.js). */
 export function formatSkillsForPrompt(skills: Skill[]): string {
-  const visibleSkills = skills.filter((s) => !s.disableModelInvocation);
+  const visibleSkills = skills.filter((s) => !s.disableModelInvocation)
   if (visibleSkills.length === 0) {
-    return "";
+    return ""
   }
   const lines = [
     "\n\nThe following skills provide specialized instructions for specific tasks.",
     "Use the read tool to load a skill's file when the task matches its description.",
     "When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
     "",
-    "<available_skills>",
-  ];
+    "<available_skills>"
+  ]
   for (const skill of visibleSkills) {
-    lines.push("  <skill>");
-    lines.push(`    <name>${escapeXml(skill.name)}</name>`);
-    lines.push(`    <description>${escapeXml(skill.description)}</description>`);
-    lines.push(`    <location>${escapeXml(skill.filePath)}</location>`);
-    lines.push("  </skill>");
+    lines.push("  <skill>")
+    lines.push(`    <name>${escapeXml(skill.name)}</name>`)
+    lines.push(`    <description>${escapeXml(skill.description)}</description>`)
+    lines.push(`    <location>${escapeXml(skill.filePath)}</location>`)
+    lines.push("  </skill>")
   }
-  lines.push("</available_skills>");
-  return lines.join("\n");
+  lines.push("</available_skills>")
+  return lines.join("\n")
 }
 
 /**
@@ -55,46 +55,46 @@ export function formatSkillsForPrompt(skills: Skill[]): string {
  * Scans the common mise npm install layouts, then node_modules.
  */
 export function getPiPackageDir(): string | undefined {
-  const home = homedir();
+  const home = homedir()
   const candidates = [
     join(home, ".local/share/mise/installs/npm-earendil-works-pi-coding-agent/latest"),
-    join(home, ".local/share/mise/installs/npm-earendil-works-pi-coding-agent/0.83.0"),
-  ];
+    join(home, ".local/share/mise/installs/npm-earendil-works-pi-coding-agent/0.83.0")
+  ]
   for (const base of candidates) {
-    const pkg = join(base, "node_modules/@earendil-works/pi-coding-agent");
-    if (existsSync(pkg)) return pkg;
+    const pkg = join(base, "node_modules/@earendil-works/pi-coding-agent")
+    if (existsSync(pkg)) return pkg
   }
   // generic: any version dir under the mise install root
-  const installRoot = join(home, ".local/share/mise/installs");
+  const installRoot = join(home, ".local/share/mise/installs")
   if (existsSync(installRoot)) {
     for (const entry of readdirSync(installRoot)) {
-      if (!entry.startsWith("npm-earendil-works-pi-coding-agent")) continue;
-      const full = join(installRoot, entry, "node_modules/@earendil-works/pi-coding-agent");
-      if (existsSync(full)) return full;
+      if (!entry.startsWith("npm-earendil-works-pi-coding-agent")) continue
+      const full = join(installRoot, entry, "node_modules/@earendil-works/pi-coding-agent")
+      if (existsSync(full)) return full
     }
   }
-  return undefined;
+  return undefined
 }
 
 export function getReadmePath(): string {
-  return join(getPiPackageDir() ?? "", "README.md");
+  return join(getPiPackageDir() ?? "", "README.md")
 }
 export function getDocsPath(): string {
-  return join(getPiPackageDir() ?? "", "docs");
+  return join(getPiPackageDir() ?? "", "docs")
 }
 export function getExamplesPath(): string {
-  return join(getPiPackageDir() ?? "", "examples");
+  return join(getPiPackageDir() ?? "", "examples")
 }
 
 export interface BuildSystemPromptOptions {
-  customPrompt?: string;
-  selectedTools?: string[];
-  toolSnippets?: Record<string, string>;
-  promptGuidelines?: string[];
-  appendSystemPrompt?: string;
-  cwd: string;
-  contextFiles?: ContextFile[];
-  skills?: Skill[];
+  customPrompt?: string
+  selectedTools?: string[]
+  toolSnippets?: Record<string, string>
+  promptGuidelines?: string[]
+  appendSystemPrompt?: string
+  cwd: string
+  contextFiles?: ContextFile[]
+  skills?: Skill[]
 }
 
 /** Build the system prompt with tools, guidelines, and context (verbatim from pi 0.83.0). */
@@ -107,78 +107,76 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
     appendSystemPrompt,
     cwd,
     contextFiles: providedContextFiles,
-    skills: providedSkills,
-  } = options;
-  const promptCwd = cwd.replace(/\\/g, "/");
-  const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : "";
-  const contextFiles = providedContextFiles ?? [];
-  const skills = providedSkills ?? [];
+    skills: providedSkills
+  } = options
+  const promptCwd = cwd.replace(/\\/g, "/")
+  const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : ""
+  const contextFiles = providedContextFiles ?? []
+  const skills = providedSkills ?? []
 
   if (customPrompt) {
-    let prompt = customPrompt;
+    let prompt = customPrompt
     if (appendSection) {
-      prompt += appendSection;
+      prompt += appendSection
     }
     // Append project context files
     if (contextFiles.length > 0) {
-      prompt += "\n\n<project_context>\n\n";
-      prompt += "Project-specific instructions and guidelines:\n\n";
+      prompt += "\n\n<project_context>\n\n"
+      prompt += "Project-specific instructions and guidelines:\n\n"
       for (const { path: filePath, content } of contextFiles) {
-        prompt += `<project_instructions path="${filePath}">\n${content}\n</project_instructions>\n\n`;
+        prompt += `<project_instructions path="${filePath}">\n${content}\n</project_instructions>\n\n`
       }
-      prompt += "</project_context>\n";
+      prompt += "</project_context>\n"
     }
     // Append skills section (only if read tool is available)
-    const customPromptHasRead = !selectedTools || selectedTools.includes("read");
+    const customPromptHasRead = !selectedTools || selectedTools.includes("read")
     if (customPromptHasRead && skills.length > 0) {
-      prompt += formatSkillsForPrompt(skills);
+      prompt += formatSkillsForPrompt(skills)
     }
-    prompt += `\nCurrent working directory: ${promptCwd}`;
-    return prompt;
+    prompt += `\nCurrent working directory: ${promptCwd}`
+    return prompt
   }
 
   // Get absolute paths to documentation and examples
-  const readmePath = getReadmePath();
-  const docsPath = getDocsPath();
-  const examplesPath = getExamplesPath();
+  const readmePath = getReadmePath()
+  const docsPath = getDocsPath()
+  const examplesPath = getExamplesPath()
 
   // Build tools list based on selected tools.
-  const tools = selectedTools || ["read", "bash", "edit", "write"];
-  const visibleTools = tools.filter((name) => !!toolSnippets?.[name]);
+  const tools = selectedTools || ["read", "bash", "edit", "write"]
+  const visibleTools = tools.filter((name) => !!toolSnippets?.[name])
   const toolsList =
-    visibleTools.length > 0
-      ? visibleTools.map((name) => `- ${name}: ${toolSnippets?.[name]}`).join("\n")
-      : "(none)";
+    visibleTools.length > 0 ? visibleTools.map((name) => `- ${name}: ${toolSnippets?.[name]}`).join("\n") : "(none)"
 
   // Build guidelines based on which tools are actually available
-  const guidelinesList: string[] = [];
-  const guidelinesSet = new Set<string>();
+  const guidelinesList: string[] = []
+  const guidelinesSet = new Set<string>()
   const addGuideline = (guideline: string) => {
     if (guidelinesSet.has(guideline)) {
-      return;
+      return
     }
-    guidelinesSet.add(guideline);
-    guidelinesList.push(guideline);
-  };
-  const hasBash = tools.includes("bash");
-  const hasGrep = tools.includes("grep");
-  const hasFind = tools.includes("find");
-  const hasLs = tools.includes("ls");
-  const hasRead = tools.includes("read");
+    guidelinesSet.add(guideline)
+    guidelinesList.push(guideline)
+  }
+  const hasBash = tools.includes("bash")
+  const hasGrep = tools.includes("grep")
+  const hasFind = tools.includes("find")
+  const hasLs = tools.includes("ls")
+  const hasRead = tools.includes("read")
   // File exploration guidelines
   if (hasBash && !hasGrep && !hasFind && !hasLs) {
-    addGuideline("Use bash for file operations like ls, rg, find");
+    addGuideline("Use bash for file operations like ls, rg, find")
   }
   for (const guideline of promptGuidelines ?? []) {
-    const normalized = guideline.trim();
+    const normalized = guideline.trim()
     if (normalized.length > 0) {
-      addGuideline(normalized);
+      addGuideline(normalized)
     }
   }
   // Always include these
-  addGuideline("Be concise in your responses");
-  addGuideline("Show file paths clearly when working with files");
-  const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
+  addGuideline("Be concise in your responses")
+  addGuideline("Show file paths clearly when working with files")
+  const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n")
 
   let prompt = `You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
 
@@ -197,24 +195,24 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 - When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
 - When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md), environment variables (docs/environment-variables.md)
 - When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
-- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
+- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`
 
   if (appendSection) {
-    prompt += appendSection;
+    prompt += appendSection
   }
   // Append project context files
   if (contextFiles.length > 0) {
-    prompt += "\n\n<project_context>\n\n";
-    prompt += "Project-specific instructions and guidelines:\n\n";
+    prompt += "\n\n<project_context>\n\n"
+    prompt += "Project-specific instructions and guidelines:\n\n"
     for (const { path: filePath, content } of contextFiles) {
-      prompt += `<project_instructions path="${filePath}">\n${content}\n</project_instructions>\n\n`;
+      prompt += `<project_instructions path="${filePath}">\n${content}\n</project_instructions>\n\n`
     }
-    prompt += "</project_context>\n";
+    prompt += "</project_context>\n"
   }
   // Append skills section (only if read tool is available)
   if (hasRead && skills.length > 0) {
-    prompt += formatSkillsForPrompt(skills);
+    prompt += formatSkillsForPrompt(skills)
   }
-  prompt += `\nCurrent working directory: ${promptCwd}`;
-  return prompt;
+  prompt += `\nCurrent working directory: ${promptCwd}`
+  return prompt
 }

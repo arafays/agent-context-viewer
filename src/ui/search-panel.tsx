@@ -30,11 +30,14 @@ export function SearchPanel({
   const [query, setQuery] = useState("");
   const [ready, setReady] = useState(false);
 
-  // fff index may still be building; poll until ready.
+  // fff index may still be building; poll until ready. If creation failed,
+  // the index carries an error — surface it and stop polling.
   useEffect(() => {
     if (index?.ready) { setReady(true); return; }
+    if (index?.error) return;
     const id = setInterval(() => {
       if (index?.ready) { setReady(true); clearInterval(id); }
+      else if (index?.error) { clearInterval(id); }
     }, 200);
     return () => clearInterval(id);
   }, [index]);
@@ -45,6 +48,11 @@ export function SearchPanel({
   }, [ready, index, query, tool]);
 
   const sel = useSelection(hits.length);
+
+  // Keep the selection valid when the hit list shrinks.
+  useEffect(() => {
+    sel.clamp();
+  }, [hits.length]);
 
   useKeyboard((key) => {
     if (key.name === "escape" || (key.name === "q" && !key.shift)) { onClose(); return; }
@@ -73,11 +81,13 @@ export function SearchPanel({
 
   const status = !index
     ? "index building…"
-    : !ready
-      ? "waiting for index…"
-      : query.trim()
-        ? `${hits.length} session${hits.length === 1 ? "" : "s"}`
-        : "type to fuzzy-search session content";
+    : index.error
+      ? `index error: ${index.error}`
+      : !ready
+        ? "waiting for index…"
+        : query.trim()
+          ? `${hits.length} session${hits.length === 1 ? "" : "s"}`
+          : "type to fuzzy-search session content";
 
   return (
     <box position="absolute" width="100%" height={rows} top={0} left={0} backgroundColor={theme.defaultBg ?? (theme.dark ? "#0b0b0b" : "#ffffff")} flexDirection="column">

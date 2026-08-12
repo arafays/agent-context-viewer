@@ -5,34 +5,34 @@
  * - `dist/utils/paths.js` → `canonicalizePath`, `resolvePath`
  * See NOTE.md in this directory.
  */
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
-import { canonicalizePath, resolvePath } from "./paths.ts";
+import { existsSync, readFileSync, statSync } from "node:fs"
+import { basename, dirname, join, resolve, sep } from "node:path"
+import { canonicalizePath, resolvePath } from "./paths.ts"
 
 export interface ContextFile {
-  path: string;
-  content: string;
+  path: string
+  content: string
 }
 
 function loadContextFileFromDir(dir: string): ContextFile | null {
-  const candidates = ["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
+  const candidates = ["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]
   for (const filename of candidates) {
-    const filePath = join(dir, filename);
+    const filePath = join(dir, filename)
     if (existsSync(filePath)) {
       try {
         if (!statSync(filePath).isFile()) {
-          continue;
+          continue
         }
         return {
           path: filePath,
-          content: readFileSync(filePath, "utf-8"),
-        };
+          content: readFileSync(filePath, "utf-8")
+        }
       } catch {
         // unreadable file → try next candidate
       }
     }
   }
-  return null;
+  return null
 }
 
 /**
@@ -40,36 +40,36 @@ function loadContextFileFromDir(dir: string): ContextFile | null {
  * Returns { repoDir, commonGitDir, headPath } or null.
  */
 export function findGitPaths(cwd: string): { repoDir: string; commonGitDir: string; headPath: string } | null {
-  let dir = cwd;
+  let dir = cwd
   while (true) {
-    const gitPath = join(dir, ".git");
+    const gitPath = join(dir, ".git")
     if (existsSync(gitPath)) {
       try {
-        const st = statSync(gitPath);
+        const st = statSync(gitPath)
         if (st.isFile()) {
-          const content = readFileSync(gitPath, "utf8").trim();
+          const content = readFileSync(gitPath, "utf8").trim()
           if (content.startsWith("gitdir: ")) {
-            const gitDir = resolve(dir, content.slice(8).trim());
-            const headPath = join(gitDir, "HEAD");
-            if (!existsSync(headPath)) return null;
-            const commonDirPath = join(gitDir, "commondir");
+            const gitDir = resolve(dir, content.slice(8).trim())
+            const headPath = join(gitDir, "HEAD")
+            if (!existsSync(headPath)) return null
+            const commonDirPath = join(gitDir, "commondir")
             const commonGitDir = existsSync(commonDirPath)
               ? resolve(gitDir, readFileSync(commonDirPath, "utf8").trim())
-              : gitDir;
-            return { repoDir: dir, commonGitDir, headPath };
+              : gitDir
+            return { repoDir: dir, commonGitDir, headPath }
           }
         } else if (st.isDirectory()) {
-          const headPath = join(gitPath, "HEAD");
-          if (!existsSync(headPath)) return null;
-          return { repoDir: dir, commonGitDir: gitPath, headPath };
+          const headPath = join(gitPath, "HEAD")
+          if (!existsSync(headPath)) return null
+          return { repoDir: dir, commonGitDir: gitPath, headPath }
         }
       } catch {
-        return null;
+        return null
       }
     }
-    const parent = dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
+    const parent = dirname(dir)
+    if (parent === dir) return null
+    dir = parent
   }
 }
 
@@ -78,15 +78,15 @@ export function findGitPaths(cwd: string): { repoDir: string; commonGitDir: stri
  * are the same tracked AGENTS.md/CLAUDE.md, so loading both loads it twice.
  */
 function findShadowedContextFile(cwd: string): string | undefined {
-  const gitPaths = findGitPaths(cwd);
-  if (!gitPaths) return undefined;
-  const commonGitDir = canonicalizePath(gitPaths.commonGitDir);
-  const worktreeRoot = canonicalizePath(gitPaths.repoDir);
-  const mainRepoRoot = dirname(commonGitDir);
-  if (!worktreeRoot.startsWith(`${mainRepoRoot}${sep}`)) return undefined;
-  if (canonicalizePath(join(mainRepoRoot, ".git")) !== commonGitDir) return undefined;
-  const worktreeContextFile = loadContextFileFromDir(worktreeRoot);
-  return worktreeContextFile ? join(mainRepoRoot, basename(worktreeContextFile.path)) : undefined;
+  const gitPaths = findGitPaths(cwd)
+  if (!gitPaths) return undefined
+  const commonGitDir = canonicalizePath(gitPaths.commonGitDir)
+  const worktreeRoot = canonicalizePath(gitPaths.repoDir)
+  const mainRepoRoot = dirname(commonGitDir)
+  if (!worktreeRoot.startsWith(`${mainRepoRoot}${sep}`)) return undefined
+  if (canonicalizePath(join(mainRepoRoot, ".git")) !== commonGitDir) return undefined
+  const worktreeContextFile = loadContextFileFromDir(worktreeRoot)
+  return worktreeContextFile ? join(mainRepoRoot, basename(worktreeContextFile.path)) : undefined
 }
 
 /**
@@ -94,35 +94,31 @@ function findShadowedContextFile(cwd: string): string | undefined {
  * then every AGENTS.md/CLAUDE.md walking up from cwd to the filesystem root.
  * This is the exact list Pi injects into <project_context> in the system prompt.
  */
-export function loadProjectContextFiles(options: {
-  cwd: string;
-  agentDir: string;
-}): ContextFile[] {
-  const resolvedCwd = resolvePath(options.cwd);
-  const resolvedAgentDir = resolvePath(options.agentDir);
-  const contextFiles: ContextFile[] = [];
-  const seenPaths = new Set<string>();
-  const globalContext = loadContextFileFromDir(resolvedAgentDir);
+export function loadProjectContextFiles(options: { cwd: string; agentDir: string }): ContextFile[] {
+  const resolvedCwd = resolvePath(options.cwd)
+  const resolvedAgentDir = resolvePath(options.agentDir)
+  const contextFiles: ContextFile[] = []
+  const seenPaths = new Set<string>()
+  const globalContext = loadContextFileFromDir(resolvedAgentDir)
   if (globalContext) {
-    contextFiles.push(globalContext);
-    seenPaths.add(globalContext.path);
+    contextFiles.push(globalContext)
+    seenPaths.add(globalContext.path)
   }
-  const ancestorContextFiles: ContextFile[] = [];
-  const shadowedContextFile = findShadowedContextFile(resolvedCwd);
-  let currentDir = resolvedCwd;
+  const ancestorContextFiles: ContextFile[] = []
+  const shadowedContextFile = findShadowedContextFile(resolvedCwd)
+  let currentDir = resolvedCwd
   while (true) {
-    const contextFile = loadContextFileFromDir(currentDir);
+    const contextFile = loadContextFileFromDir(currentDir)
     const isShadowed =
-      shadowedContextFile !== undefined &&
-      canonicalizePath(contextFile?.path ?? "") === shadowedContextFile;
+      shadowedContextFile !== undefined && canonicalizePath(contextFile?.path ?? "") === shadowedContextFile
     if (contextFile && !isShadowed && !seenPaths.has(contextFile.path)) {
-      ancestorContextFiles.unshift(contextFile);
-      seenPaths.add(contextFile.path);
+      ancestorContextFiles.unshift(contextFile)
+      seenPaths.add(contextFile.path)
     }
-    const parentDir = dirname(currentDir);
-    if (parentDir === currentDir) break;
-    currentDir = parentDir;
+    const parentDir = dirname(currentDir)
+    if (parentDir === currentDir) break
+    currentDir = parentDir
   }
-  contextFiles.push(...ancestorContextFiles);
-  return contextFiles;
+  contextFiles.push(...ancestorContextFiles)
+  return contextFiles
 }

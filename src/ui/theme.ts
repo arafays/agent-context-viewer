@@ -47,23 +47,60 @@ export interface Theme {
 
 /** ANSI index → our semantic hue. */
 const IDX = {
-  black: 0, red: 1, green: 2, yellow: 3, blue: 4, magenta: 5, cyan: 6, white: 7,
-  brightBlack: 8, brightRed: 9, brightGreen: 10, brightYellow: 11,
-  brightBlue: 12, brightMagenta: 13, brightCyan: 14, brightWhite: 15,
+  black: 0,
+  red: 1,
+  green: 2,
+  yellow: 3,
+  blue: 4,
+  magenta: 5,
+  cyan: 6,
+  white: 7,
+  brightBlack: 8,
+  brightRed: 9,
+  brightGreen: 10,
+  brightYellow: 11,
+  brightBlue: 12,
+  brightMagenta: 13,
+  brightCyan: 14,
+  brightWhite: 15
 } as const
 
 /** Fallback ANSI colors when the terminal can't answer the OSC query. */
 const FALLBACK_DARK: Record<number, [number, number, number]> = {
-  0: [30, 30, 30], 1: [230, 80, 80], 2: [90, 200, 120], 3: [220, 190, 70], 4: [90, 160, 220],
-  5: [210, 140, 220], 6: [80, 200, 220], 7: [235, 235, 235],
-  8: [120, 120, 120], 9: [255, 110, 110], 10: [140, 230, 160], 11: [240, 210, 110],
-  12: [130, 190, 255], 13: [240, 170, 250], 14: [120, 220, 240], 15: [255, 255, 255],
+  0: [30, 30, 30],
+  1: [230, 80, 80],
+  2: [90, 200, 120],
+  3: [220, 190, 70],
+  4: [90, 160, 220],
+  5: [210, 140, 220],
+  6: [80, 200, 220],
+  7: [235, 235, 235],
+  8: [120, 120, 120],
+  9: [255, 110, 110],
+  10: [140, 230, 160],
+  11: [240, 210, 110],
+  12: [130, 190, 255],
+  13: [240, 170, 250],
+  14: [120, 220, 240],
+  15: [255, 255, 255]
 }
 const FALLBACK_LIGHT: Record<number, [number, number, number]> = {
-  0: [60, 60, 60], 1: [190, 30, 30], 2: [0, 130, 60], 3: [150, 110, 0], 4: [20, 90, 190],
-  5: [140, 40, 140], 6: [0, 120, 140], 7: [240, 240, 240],
-  8: [110, 110, 110], 9: [220, 60, 60], 10: [40, 160, 80], 11: [180, 140, 0],
-  12: [40, 110, 220], 13: [170, 60, 170], 14: [0, 150, 170], 15: [250, 250, 250],
+  0: [60, 60, 60],
+  1: [190, 30, 30],
+  2: [0, 130, 60],
+  3: [150, 110, 0],
+  4: [20, 90, 190],
+  5: [140, 40, 140],
+  6: [0, 120, 140],
+  7: [240, 240, 240],
+  8: [110, 110, 110],
+  9: [220, 60, 60],
+  10: [40, 160, 80],
+  11: [180, 140, 0],
+  12: [40, 110, 220],
+  13: [170, 60, 170],
+  14: [0, 150, 170],
+  15: [250, 250, 250]
 }
 
 const DEFAULT_DARK_FG = "#e6e6e6"
@@ -104,12 +141,7 @@ function contrast(a: RGB, b: RGB): number {
  * against the background, but only if it clears `min` — otherwise return the
  * default foreground, which is readable by definition.
  */
-function pick(
-  candidates: (RGB | null)[],
-  bg: RGB,
-  fg: string,
-  min: number,
-): string {
+function pick(candidates: (RGB | null)[], bg: RGB, fg: string, min: number): string {
   let best: RGB | null = null
   let bestC = 0
   for (const c of candidates) {
@@ -188,7 +220,7 @@ export function buildTheme(colors: TerminalColors | null | undefined): Theme {
     defaultFg: defaultFg ?? null,
     defaultBg: defaultBg ?? null,
     dark,
-    ansi: ansi.slice(0, 16),
+    ansi: ansi.slice(0, 16)
   }
 }
 
@@ -216,7 +248,9 @@ export function watchTheme(renderer: CliRenderer, onTheme: (t: Theme) => void): 
 
   renderer.getPalette({ size: 16 }).then(
     (colors) => handle(colors),
-    () => { /* OSC not supported — keep the default theme */ },
+    () => {
+      /* OSC not supported — keep the default theme */
+    }
   )
 
   return () => {

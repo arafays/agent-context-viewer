@@ -2,6 +2,7 @@ import { TextAttributes } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useMemo, useState } from "react"
 import { Header, KeyHint } from "./components.tsx"
+import { overlayOpen } from "./overlay.ts"
 import type { Theme } from "./theme.ts"
 import { wordWrap } from "./util.ts"
 import type { AgentSession } from "../adapters/types.ts"
@@ -31,21 +32,26 @@ export function SystemPromptView({
     return l;
   }, [info]);
 
-  useKeyboard((key) => {
-    if (key.name === "down" || key.name === "j") setScroll((s) => Math.min(s + 1, Math.max(0, lines.length - 1)));
-    else if (key.name === "up" || key.name === "k") setScroll((s) => Math.max(0, s - 1));
-    else if (key.name === "pagedown") setScroll((s) => Math.min(s + 10, Math.max(0, lines.length - 1)));
-    else if (key.name === "pageup") setScroll((s) => Math.max(0, s - 10));
-    else if (key.name === "home") setScroll(0);
-    else if (key.name === "end") setScroll(Math.max(0, lines.length - 1));
-    else if ((key.name === "q" || key.name === "escape") && !key.shift) onBack();
-  });
-
+  // Scroll in word-wrapped line space so every wrapped line is reachable
+  // (a long prompt that wraps below the viewport would otherwise be lost).
   const wrapWidth = Math.max(8, columns - 2);
   const wrapped = useMemo(() => lines.flatMap((l) => wordWrap(l, wrapWidth)), [lines, wrapWidth]);
   const viewportRows = Math.max(1, rows - 5);
-  const half = Math.max(1, Math.floor(viewportRows / 2));
-  const start = Math.max(0, Math.min(scroll - half, Math.max(0, wrapped.length - viewportRows)));
+  const maxScroll = Math.max(0, wrapped.length - viewportRows);
+
+  useKeyboard((key) => {
+    // while an overlay (help / global search) is open, don't respond to keys
+    if (overlayOpen.current) return;
+    if (key.name === "down" || key.name === "j") setScroll((s) => Math.min(s + 1, maxScroll));
+    else if (key.name === "up" || key.name === "k") setScroll((s) => Math.max(0, s - 1));
+    else if (key.name === "pagedown") setScroll((s) => Math.min(s + 10, maxScroll));
+    else if (key.name === "pageup") setScroll((s) => Math.max(0, s - 10));
+    else if (key.name === "home") setScroll(0);
+    else if (key.name === "end") setScroll(maxScroll);
+    else if ((key.name === "q" || key.name === "escape") && !key.shift) onBack();
+  });
+
+  const start = Math.max(0, Math.min(scroll, maxScroll));
   const visible = wrapped.slice(start, start + viewportRows);
 
   return (

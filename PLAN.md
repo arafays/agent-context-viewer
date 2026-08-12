@@ -8,6 +8,7 @@
 A terminal UI that shows **how AI coding agents assemble context**: for each prompt, the "before context" and "after context", what was added, what was pruned, which system prompt was loaded, which `AGENTS.md`/`CLAUDE.md` files were injected, and the full transcript of every session.
 
 **v1 scope (user-confirmed):**
+
 - Only **Pi** (`@earendil-works/pi-coding-agent` 0.83.0, installed via mise) — richest, and the priority.
 - Headline feature: **context before/after per turn**.
 - Architecture must support adding opencode / Claude Code ("cloud") / codex / command-code (cmd) / Cursor / VS Code later.
@@ -87,12 +88,13 @@ Keep raw entries too (fidelity); normalize only for rendering.
 ## Headline feature — context before/after per turn
 
 For each assistant turn N in a Pi session:
+
 - **before(N)** = exact context messages when request N was sent = vendored `buildSessionContext(entries up to N)` + system prompt = vendored `buildSystemPrompt({cwd, contextFiles: loadProjectContextFiles(cwd), skills, toolSnippets, ...})`.
 - **after(N)** = before(N+1).
 - **diff(N)** = messages added (new user msg, tool results), compaction events (`tokensBefore`, summary) → rendered green/red.
 - **token curve**: `usage.input + usage.cacheRead` per assistant message (authoritative, from the file) — bar chart over turns showing context growth, cache reuse, and prune drops.
 
-**Reconstruction caveat:** system prompt + AGENTS.md contents are rebuilt from *current* files (session doesn't snapshot them). Label these views "reconstructed — AGENTS.md may differ from session date". Token counts and messages are authoritative.
+**Reconstruction caveat:** system prompt + AGENTS.md contents are rebuilt from _current_ files (session doesn't snapshot them). Label these views "reconstructed — AGENTS.md may differ from session date". Token counts and messages are authoritative.
 
 ## Reuse
 
@@ -110,13 +112,13 @@ For each assistant turn N in a Pi session:
 - [x] 5. UI: Home (tool picker) → SessionList (search, metadata) → SessionDetail (transcript) → ContextView (curve + snapshot + diff) + SystemPromptView + ContextFilesView. Keybindings: `j/k` scroll, `Enter` open, `Tab` tool switch, `s` system prompt, `f` context files, `c` context view, `q`/`Esc` back, `/` search.
 - [x] 6. Polish: large-session lazy reading, malformed-line tolerance, help panel, loading states, README with screenshots/usage.
 - [x] 7. First additional adapter: **Codex** (`~/.codex/sessions/**/rollout-*.jsonl`) — exact context
-  (system prompt inline via `session_meta.base_instructions`, AGENTS.md/skills/permissions as
-  developer/user messages, per-request usage from `token_count`, model from `turn_context`).
-  Screens consume the shared `AgentSession` (`contextInfo` + `contextPoints` precomputed at load).
+      (system prompt inline via `session_meta.base_instructions`, AGENTS.md/skills/permissions as
+      developer/user messages, per-request usage from `token_count`, model from `turn_context`).
+      Screens consume the shared `AgentSession` (`contextInfo` + `contextPoints` precomputed at load).
   - [x] claude (`~/.claude/projects/*.jsonl`) — exact per-request usage; system
-    prompt not persisted by Claude Code (turn_duration only) → honest note +
-    reconstructed context files; assistant entries grouped by identical usage
-    (Claude emits one entry per content block); commands shown as ⌘ lines
+        prompt not persisted by Claude Code (turn_duration only) → honest note +
+        reconstructed context files; assistant entries grouped by identical usage
+        (Claude emits one entry per content block); commands shown as ⌘ lines
   - [ ] opencode (`~/.local/share/opencode/` SQLite)
   - [ ] cmd (`~/.commandcode/projects/`)
   - [ ] cursor / vscode (SQLite stores)

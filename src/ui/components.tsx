@@ -2,6 +2,8 @@ import { TextAttributes } from "@opentui/core"
 import { useTerminalDimensions } from "@opentui/react"
 import { useEffect, useState } from "react"
 import type { Theme } from "./theme.ts"
+import type { AgentTool } from "../adapters/types.ts"
+import type { SearchIndex } from "../engine/search-index.ts"
 
 /** Accent diamond + bold title + dim subtitle, single-line (truncates). */
 export function Header({ title, subtitle, theme }: { title: string; subtitle?: string; theme: Theme }) {
@@ -11,7 +13,7 @@ export function Header({ title, subtitle, theme }: { title: string; subtitle?: s
   if (sub.length > avail) sub = sub.slice(0, Math.max(0, avail - 1)) + "…";
   return (
     <box flexDirection="column" width={columns}>
-      <box width={columns}>
+      <box flexDirection="row" width={columns}>
         <text fg={theme.accent} attributes={TextAttributes.BOLD}>◆ </text>
         <text attributes={TextAttributes.BOLD}>{title}</text>
         {sub ? <text attributes={TextAttributes.DIM}>  {sub}</text> : null}
@@ -43,6 +45,49 @@ export function Spinner({ label }: { label: string }) {
 
 /** Reactive terminal size. */
 export { useTerminalDimensions as useTerminalSize };
+
+/**
+ * Inline fuzzy-filter state for lists, backed by the fff SearchIndex.
+ * `/` opens the filter; typing narrows; Esc/empty restores the full list.
+ */
+export function useFuzzyFilter(
+  index: SearchIndex | null,
+  tool?: AgentTool,
+) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const active = open && query.trim().length > 0;
+
+  const toggle = () => {
+    if (open) {
+      setOpen(false);
+      setQuery("");
+    } else {
+      setOpen(true);
+    }
+  };
+
+  const handleKey = (key: { name: string; shift?: boolean; sequence?: string }): boolean => {
+    if (!open) return false;
+    if (key.name === "escape") {
+      setOpen(false);
+      setQuery("");
+      return true;
+    }
+    if (key.name === "backspace") {
+      setQuery((q) => q.slice(0, -1));
+      return true;
+    }
+    if (key.sequence && key.sequence.length === 1 && key.sequence.charCodeAt(0) >= 32) {
+      setQuery((q) => q + key.sequence);
+      return true;
+    }
+    return false;
+  };
+
+  return { open, query, active, toggle, handleKey, setQuery };
+}
 
 /**
  * Selection hook — clamps to [0, count-1].

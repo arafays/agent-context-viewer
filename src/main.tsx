@@ -1,17 +1,17 @@
-import { createCliRenderer } from "@opentui/core"
-import { createRoot } from "@opentui/react"
-import { App } from "./app.tsx"
-import pkg from "../package.json"
+import { createCliRenderer } from "@opentui/core";
+import { createRoot } from "@opentui/react";
+import { App } from "./app.tsx";
+import pkg from "../package.json";
 
 /**
  * Version is baked in at compile time via `process.env.ACV_VERSION` (see
  * scripts/build-release.ts). In dev it falls back to package.json.
  */
-const version = process.env.ACV_VERSION ?? pkg.version
+const version = process.env.ACV_VERSION ?? pkg.version;
 
 if (Bun.argv.includes("--version") || Bun.argv.includes("-v")) {
-  console.log(`acv ${version}`)
-  process.exit(0)
+  console.log(`acv ${version}`);
+  process.exit(0);
 }
 
 if (Bun.argv.includes("--help") || Bun.argv.includes("-h")) {
@@ -28,9 +28,9 @@ if (Bun.argv.includes("--help") || Bun.argv.includes("-h")) {
       "Browse AI-agent session context (Pi, Codex, Claude, opencode) in a TUI.",
       "j/k scroll · / search · Enter open · c context · s system prompt · f files · q quit",
     ].join("\n"),
-  )
-  process.exit(0)
+  );
+  process.exit(0);
 }
 
-const renderer = await createCliRenderer({ exitOnCtrlC: false })
-createRoot(renderer).render(<App />)
+const renderer = await createCliRenderer({ exitOnCtrlC: false });
+createRoot(renderer).render(<App />);

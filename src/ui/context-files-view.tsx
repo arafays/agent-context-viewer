@@ -2,6 +2,7 @@ import { TextAttributes } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useEffect, useMemo, useState } from "react"
 import { Header, KeyHint, useSelection } from "./components.tsx"
+import { overlayOpen } from "./overlay.ts"
 import type { Theme } from "./theme.ts"
 import { tildeHome, wordWrap } from "./util.ts"
 import type { AgentSession } from "../adapters/types.ts"
@@ -22,13 +23,14 @@ export function ContextFilesView({
   const selectedFile = files[fileSel.selected];
 
   useKeyboard((key) => {
+    if (overlayOpen.current) return;
     if (key.name === "down" || key.name === "j") fileSel.move(1);
     else if (key.name === "up" || key.name === "k") fileSel.move(-1);
     else if (key.name === "pagedown") setContentScroll((s) => s + 10);
     else if (key.name === "pageup") setContentScroll((s) => Math.max(0, s - 10));
     else if (key.name === "home") setContentScroll(0);
     else if (key.name === "end") setContentScroll(wrappedContent.length);
-    else if ((key.name === "q" || key.name === "escape") && !key.shift) onBack();
+    else if ((key.name === "q" || key.name === "escape") && !key.ctrl && !key.shift) onBack();
   });
 
   const borderPad = 4;
@@ -42,8 +44,20 @@ export function ContextFilesView({
     const raw = `${f.global ? "[global]" : "       "} ${truncPath(tildeHome(f.path), fileContentWidth - 12)}`;
     const full = prefix + raw;
     const truncated = full.length > fileContentWidth ? full.slice(0, fileContentWidth - 1) + "…" : full;
-    return { text: truncated, sel: i === fileSel.selected };
+    return { path: f.path, text: truncated, sel: i === fileSel.selected };
   });
+
+  // The FILES pane renders a fixed number of rows (border 2 + padding 2 + title 1
+  // rows are taken by the pane chrome). Window the file list around the selection
+  // so the pane never overflows — OpenTUI corrupts rows once content exceeds the
+  // bordered box.
+  const fileViewportRows = Math.max(1, rows - 7 - 1);
+  const fileHalf = Math.max(1, Math.floor(fileViewportRows / 2));
+  const fStart = Math.max(
+    0,
+    Math.min(fileSel.selected - fileHalf, Math.max(0, fileLines.length - fileViewportRows)),
+  );
+  const visibleFiles = fileLines.slice(fStart, fStart + fileViewportRows);
 
   const content = selectedFile?.content ?? "";
   const maxContentWidth = contentContentWidth - 2;
@@ -67,9 +81,9 @@ export function ContextFilesView({
       <box flexDirection="row" flexGrow={1}>
         <box flexDirection="column" width={filePaneWidth} borderStyle="rounded" borderColor={theme.border} padding={1}>
           <text attributes={TextAttributes.BOLD} fg={theme.toolResult}> FILES</text>
-          {fileLines.map((f, i) => (
+          {visibleFiles.map((f, i) => (
             <text
-              key={i}
+              key={f.path}
               attributes={f.sel ? TextAttributes.BOLD : TextAttributes.DIM}
               fg={f.sel ? theme.accent : undefined}
             >

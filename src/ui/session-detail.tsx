@@ -2,6 +2,7 @@ import { TextAttributes } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Header, KeyHint } from "./components.tsx"
+import { overlayOpen } from "./overlay.ts"
 import { BlockReader, type ReaderContent } from "./reader.tsx"
 import type { Theme } from "./theme.ts"
 import { tildeHome, wordWrap } from "./util.ts"
@@ -236,6 +237,7 @@ export function SessionDetail({
   const half = Math.max(1, Math.floor(viewportRows / 2));
 
   useKeyboard((key) => {
+    if (overlayOpen.current) return;
     if (reader !== null) return; // focused reader owns the keyboard
     const n = anchors.length;
     if (n === 0) return; // nothing to hop between
@@ -249,10 +251,10 @@ export function SessionDetail({
       const rl = rLines[safeCursor];
       if (rl?.expand) setReader(rl.expand);
     } else if (key.name === "t") setShowThinking((s) => !s);
-    else if (key.name === "c") onOpenContext();
+    else if (key.name === "c" && !key.ctrl) onOpenContext();
     else if (key.name === "s") onOpenSysPrompt();
     else if (key.name === "f") onOpenFiles();
-    else if ((key.name === "q" || key.name === "escape") && !key.shift) onBack();
+    else if ((key.name === "q" || key.name === "escape") && !key.ctrl && !key.shift) onBack();
   });
 
   const start = Math.max(0, Math.min(safeCursor - half, Math.max(0, rLines.length - viewportRows)));
@@ -291,6 +293,8 @@ export function SessionDetail({
         ["context", "c"],
         ["sys prompt", "s"],
         ["files", "f"],
+        ["thinking", "t"],
+        ["help", "?"],
         ["back", "q"],
         ["quit app", "Q"],
       ]} theme={theme} />

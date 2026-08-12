@@ -2,6 +2,7 @@ import { TextAttributes } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useMemo, useState } from "react"
 import { Header, KeyHint } from "./components.tsx"
+import { overlayOpen } from "./overlay.ts"
 import type { Theme } from "./theme.ts"
 import { wordWrap } from "./util.ts"
 
@@ -34,6 +35,7 @@ export function BlockReader({ content, theme, onBack }: { content: ReaderContent
   );
 
   useKeyboard((key) => {
+    if (overlayOpen.current) return;
     const max = Math.max(0, lines.length - 1);
     if (key.name === "down" || key.name === "j") setCursor((c) => Math.min(c + 1, max));
     else if (key.name === "up" || key.name === "k") setCursor((c) => Math.max(0, c - 1));
@@ -41,7 +43,7 @@ export function BlockReader({ content, theme, onBack }: { content: ReaderContent
     else if (key.name === "pageup" || (key.name === "u" && key.ctrl)) setCursor((c) => Math.max(0, c - Math.max(1, rows - 5)));
     else if (key.name === "home" || (key.name === "g" && !key.shift)) setCursor(0);
     else if (key.name === "end" || (key.name === "g" && key.shift)) setCursor(max);
-    else if ((key.name === "q" || key.name === "escape") && !key.shift) onBack();
+    else if ((key.name === "q" || key.name === "escape") && !key.ctrl && !key.shift) onBack();
   });
 
   const viewportRows = Math.max(1, rows - 5);

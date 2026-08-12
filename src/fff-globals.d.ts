@@ -7,4 +7,4 @@
  * import. We run via `bun run` (no build define), so it always falls back to
  * the glibc default at runtime.
  */
-declare const FFF_LIBC: string | undefined;
+declare const FFF_LIBC: string | undefined

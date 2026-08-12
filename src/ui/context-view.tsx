@@ -2,6 +2,7 @@ import { TextAttributes } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useMemo, useState } from "react"
 import { Header, KeyHint, useSelection } from "./components.tsx"
+import { overlayOpen } from "./overlay.ts"
 import { buildRequestSteps, sessionCurve, type RequestStep } from "../engine/context-diff.ts"
 import type { Theme } from "./theme.ts"
 import type { AgentSession, NormalizedMessage } from "../adapters/types.ts"
@@ -9,15 +10,16 @@ import type { AgentSession, NormalizedMessage } from "../adapters/types.ts"
 export function ContextView({
   session,
   theme,
+  onOpenSysPrompt,
   onBack,
 }: {
   session: AgentSession;
   theme: Theme;
+  onOpenSysPrompt: () => void;
   onBack: () => void;
 }) {
   const { width: columns, height: rows } = useTerminalDimensions();
   const [showSnapshots, setShowSnapshots] = useState(true);
-  const [snapshotOffset, setSnapshotOffset] = useState(0);
 
   const { steps, curve, info } = useMemo(() => {
     const compactions = session.turns.flatMap((t) =>
@@ -43,15 +45,17 @@ export function ContextView({
   const maxCtx = curve.reduce((m, b) => Math.max(m, b.contextTokens), 0) || 1;
 
   useKeyboard((key) => {
+    // while an overlay (help / global search) is open, don't respond to keys
+    if (overlayOpen.current) return;
     if (key.name === "down" || key.name === "j") reqSel.move(1);
     else if (key.name === "up" || key.name === "k") reqSel.move(-1);
-    else if (key.name === "pageDown") reqSel.move(10);
-    else if (key.name === "pageUp") reqSel.move(-10);
+    else if (key.name === "pagedown") reqSel.move(10);
+    else if (key.name === "pageup") reqSel.move(-10);
     else if (key.name === "home") reqSel.move(-Number.MAX_SAFE_INTEGER);
     else if (key.name === "end") reqSel.move(Number.MAX_SAFE_INTEGER);
-    else if (key.name === "s") { /* system prompt navigation handled by App */ }
+    else if (key.name === "s") onOpenSysPrompt();
     else if (key.name === "d") setShowSnapshots((s) => !s);
-    else if ((key.name === "q" || key.name === "escape") && !key.shift) onBack();
+    else if ((key.name === "q" || key.name === "escape") && !key.ctrl && !key.shift) onBack();
   });
 
   // Build curve bar text — truncate to fit terminal width
@@ -151,8 +155,17 @@ export function ContextView({
         </box>
         {/* Snapshot */}
         {showSnapshots ? (
-          <box flexDirection="column" flexGrow={1} width={columns}>
-            {snapshotLines.slice(snapshotOffset, snapshotOffset + Math.max(2, viewportRows)).map((m, i) => {
+          <scrollbox
+            flexDirection="column"
+            flexShrink={0}
+            width={columns}
+            height={Math.max(2, viewportRows)}
+            scrollX={false}
+            scrollY={true}
+            stickyScroll={false}
+            viewportCulling={true}
+          >
+            {snapshotLines.map((m, i) => {
               const truncated = m.text.length > maxLineWidth ? m.text.slice(0, maxLineWidth - 1) + "…" : m.text;
               return (
                 <text key={i} fg={m.color} attributes={m.dim ? TextAttributes.DIM : TextAttributes.BOLD}>
@@ -160,7 +173,7 @@ export function ContextView({
                 </text>
               );
             })}
-          </box>
+          </scrollbox>
         ) : (
           <text attributes={TextAttributes.DIM}>snapshots hidden (d to show)</text>
         )}

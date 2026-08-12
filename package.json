@@ -1,32 +1,42 @@
 {
   "name": "agent-context-viewer",
   "version": "0.1.0",
+  "private": true,
   "description": "TUI that shows how AI coding agents assemble context — system prompts, AGENTS.md files, per-turn context before/after, and full transcripts.",
   "license": "MIT",
-  "module": "src/main.tsx",
-  "type": "module",
-  "private": true,
   "bin": {
     "acv": "src/main.tsx"
   },
-  "files": ["src"],
+  "files": [
+    "src"
+  ],
+  "type": "module",
+  "module": "src/main.tsx",
   "scripts": {
     "start": "bun run src/main.tsx",
     "build:release": "bun run scripts/build-release.ts",
     "dev": "bun --watch run src/main.tsx",
     "typecheck": "tsc --noEmit",
-    "extract-tool-snippets": "bun run scripts/extract-tool-snippets.ts"
+    "format": "biome format --write src",
+    "format:check": "biome format src",
+    "lint": "biome check src",
+    "extract-tool-snippets": "bun run scripts/extract-tool-snippets.ts",
+    "prepare": "effect-tsgo patch --typescript --no-oxlint"
   },
   "dependencies": {
     "@ff-labs/fff-bun": "^0.10.1",
     "@opentui/core": "^0.5.1",
     "@opentui/react": "^0.5.1",
+    "effect": "^3.22.1",
     "react": "^19.2.8"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.8",
+    "@effect/language-service": "^0.87.2",
     "@types/bun": "latest",
     "@types/react": "^19.2.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "@effect/tsgo": "0.36.4"
   },
   "peerDependencies": {
     "typescript": "^7.0.2"
