@@ -26,15 +26,12 @@
   "dependencies": {
     "@ff-labs/fff-bun": "^0.10.1",
     "@opentui/core": "^0.5.1",
-    "@opentui/react": "^0.5.1",
-    "effect": "^3.22.1",
-    "react": "^19.2.8"
+    "effect": "^3.22.1"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",
     "@effect/language-service": "^0.87.2",
     "@types/bun": "latest",
-    "@types/react": "^19.2.0",
     "typescript": "^7.0.2",
     "@effect/tsgo": "0.36.4"
   },

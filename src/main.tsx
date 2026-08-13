@@ -1,6 +1,5 @@
 import { createCliRenderer } from "@opentui/core";
-import { createRoot } from "@opentui/react";
-import { App } from "./app.tsx";
+import { createApp } from "./app.ts";
 import pkg from "../package.json";
 
 /**
@@ -33,4 +32,4 @@ if (Bun.argv.includes("--help") || Bun.argv.includes("-h")) {
 }
 
 const renderer = await createCliRenderer({ exitOnCtrlC: false });
-createRoot(renderer).render(<App />);
+createApp(renderer);
