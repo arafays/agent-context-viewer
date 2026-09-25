@@ -120,7 +120,8 @@ For each assistant turn N in a Pi session:
         reconstructed context files; assistant entries grouped by identical usage
         (Claude emits one entry per content block); commands shown as ⌘ lines
   - [ ] opencode (`~/.local/share/opencode/` SQLite)
-  - [ ] cursor / vscode (SQLite stores)
+  - [x] cursor / vscode (adapters shipped: state.vscdb composers, mutation-log
+    chatSessions jsonl + session-store.db)
 
 ## Verification
 

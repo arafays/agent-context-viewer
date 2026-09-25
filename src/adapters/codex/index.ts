@@ -484,7 +484,7 @@ export function loadSession(path: string): AgentSession {
         }
         break
       }
-      case "world_state":
+      // world_state (and anything else) is intentionally ignored
       default:
         break
     }

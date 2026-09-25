@@ -225,6 +225,8 @@ scripts/
   smoke-codex.ts            codex adapter sanity check
   smoke-claude.ts           claude adapter sanity check
   smoke-opencode.ts         opencode adapter sanity check (952 sessions)
+  smoke-cursor.ts           cursor adapter sanity check (state.vscdb composers)
+  smoke-vscode.ts           vscode adapter sanity check (Copilot chat sessions)
   all-tools-ui-test.tsx     drives the full UI across every available adapter
   render-test.tsx           headless snapshot of every screen
   render-loop-test.tsx      drives the full UI with fake stdin/stdout
@@ -245,7 +247,8 @@ registering it in `registry.ts` — the renderer is shared.
 - [x] opencode adapter — SQLite with 1548 sessions; exact per-request tokens,
   compaction tracking with history cutoff (truthful +N/−M diff)
 - [x] Fuzzy content search across all sessions (fff), with jump-to-turn
-- [ ] Cursor / VS Code Copilot (SQLite stores)
+- [x] Cursor / VS Code Copilot (VS Code: mutation-log chatSessions jsonl +
+  session-store.db; Cursor: state.vscdb composer blobs)
 
 ## License
 

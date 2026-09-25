@@ -34,7 +34,7 @@ src/
   adapters/
     types.ts            # Normalized model: AgentSession, Turn, ContextPoint, etc.
     registry.ts         # Tool registry: TOOLS[] + discoverSessions/loadSession dispatch
-    pi/  codex/  claude/  opencode/   # One module per agent (see README "How context is reconstructed")
+    pi/  codex/  claude/  opencode/  cursor/  vscode/   # One module per agent (see README "How context is reconstructed")
   engine/
     tokens.ts           # Token formatting, tokenBar, relativeTime
     turns.ts            # TurnSummary, sessionTokenTotals
@@ -96,13 +96,15 @@ The extractor script `scripts/extract-tool-snippets.ts` regenerates `src/vendor/
 
 ## Scripts (`scripts/`) and smoke tests
 
-Run smoke tests against the real local agent stores (Pi/, Codex/, ~/.claude/, opencode.db):
+Run smoke tests against the real local agent stores (Pi/, Codex/, ~/.claude/, opencode.db, ~/.config/Cursor/, VS Code Insiders workspaceStorage):
 
 ```sh
 aube run scripts/smoke.ts            # Pi adapter
 aube run scripts/smoke-codex.ts      # Codex adapter
 aube run scripts/smoke-claude.ts     # Claude adapter
 aube run scripts/smoke-opencode.ts   # opencode adapter (SQLite)
+aube run scripts/smoke-cursor.ts     # Cursor adapter (state.vscdb)
+aube run scripts/smoke-vscode.ts     # VS Code adapter (chatSessions jsonl + session-store.db)
 aube run scripts/verify-compaction.ts  # compaction curve sanity check (Pi)
 aube run scripts/build-release.ts    # standalone acv binary (env: BUN_TARGET/ASSET/ACV_VERSION); needs OPENTUI_LIBC=glibc
 aube run extract-tool-snippets       # regen tool-snippets.ts from installed pi (script not in scripts/ package script)

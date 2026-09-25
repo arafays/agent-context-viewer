@@ -1,15 +1,23 @@
 /**
  * Agent adapter registry. Dispatches discovery + loading to the adapter
- * registered for each tool. v1 ships Pi + Codex; the rest are declared so the
- * UI can show them as "coming soon" and adapters can be added incrementally.
+ * registered for each tool. All six tools ship an adapter; `available` reflects
+ * whether the tool's store exists on this machine.
  */
 
+import { existsSync } from "node:fs"
 import type { MetaCache } from "../engine/meta-cache.ts"
 import { discoverSessions as discoverClaude, loadSession as loadClaude } from "./claude/index.ts"
 import { discoverSessions as discoverCodex, loadSession as loadCodex } from "./codex/index.ts"
+import { globalStoragePath as cursorGlobalStoragePath } from "./cursor/db.ts"
+import { discoverSessions as discoverCursor, loadSession as loadCursor } from "./cursor/index.ts"
 import { discoverSessions as discoverOpencode, loadSession as loadOpencode } from "./opencode/index.ts"
 import { discoverSessions as discoverPi, loadSession as loadPi } from "./pi/index.ts"
 import type { AgentSession, AgentTool, SessionMeta, ToolInfo } from "./types.ts"
+import {
+  discoverSessions as discoverVscode,
+  loadSession as loadVscode,
+  isAvailable as vscodeAvailable
+} from "./vscode/index.ts"
 
 export const TOOLS: ToolInfo[] = [
   {
@@ -44,16 +52,18 @@ export const TOOLS: ToolInfo[] = [
   {
     id: "cursor",
     name: "Cursor",
-    description: "state.vscdb blobs (adapter planned)",
-    available: false,
-    storage: ["~/.config/Cursor/"]
+    description:
+      "state.vscdb composer blobs — exact transcripts; no per-request tokens or system prompt persisted (see notes)",
+    available: existsSync(cursorGlobalStoragePath()),
+    storage: ["~/.config/Cursor/User/globalStorage/"]
   },
   {
     id: "vscode",
     name: "VS Code",
-    description: "github.copilot-chat session-store.db (adapter planned)",
-    available: false,
-    storage: ["~/.config/Code - Insiders/"]
+    description:
+      "Copilot Chat workspaceStorage chatSessions/*.jsonl (mutation-log replay) + session-store.db enrichment — context points only where usage is persisted",
+    available: vscodeAvailable(),
+    storage: ["~/.config/Code - Insiders/User/workspaceStorage/", "~/.config/Code/User/workspaceStorage/"]
   }
 ]
 
@@ -73,6 +83,10 @@ export function discoverSessions(tool: AgentTool, cache?: MetaCache): SessionMet
       return discoverClaude(cache)
     case "opencode":
       return discoverOpencode(cache)
+    case "cursor":
+      return discoverCursor(cache)
+    case "vscode":
+      return discoverVscode(cache)
     default:
       return []
   }
@@ -89,6 +103,10 @@ export function loadSession(meta: SessionMeta): AgentSession {
       return loadClaude(meta.path)
     case "opencode":
       return loadOpencode(meta)
+    case "cursor":
+      return loadCursor(meta)
+    case "vscode":
+      return loadVscode(meta)
     default:
       throw new Error(`adapter not implemented: ${meta.tool}`)
   }
