@@ -11,7 +11,7 @@ A terminal UI that shows **how AI coding agents assemble context**: for each pro
 
 - Only **Pi** (`@earendil-works/pi-coding-agent` 0.83.0, installed via mise) — richest, and the priority.
 - Headline feature: **context before/after per turn**.
-- Architecture must support adding opencode / Claude Code ("cloud") / codex / command-code (cmd) / Cursor / VS Code later.
+- Architecture must support adding opencode / Claude Code ("cloud") / codex / Cursor / VS Code later.
 - "cloud" = **Claude Code** (confirmed).
 
 ## Verified facts (this machine)
@@ -74,7 +74,7 @@ agent-context-viewer/
 ## Normalized model (`adapters/types.ts`)
 
 ```ts
-type AgentTool = "pi" | "opencode" | "claude" | "codex" | "cmd" | "cursor" | "vscode";
+type AgentTool = "pi" | "opencode" | "claude" | "codex" | "cursor" | "vscode";
 
 interface SessionMeta { tool; id; path; cwd; startedAt; name?; projectPath; fileSize }
 interface MessageBlock { role; kind: "text"|"thinking"|"tool_use"|"tool_result"|"reasoning"|"image";
@@ -120,7 +120,6 @@ For each assistant turn N in a Pi session:
         reconstructed context files; assistant entries grouped by identical usage
         (Claude emits one entry per content block); commands shown as ⌘ lines
   - [ ] opencode (`~/.local/share/opencode/` SQLite)
-  - [ ] cmd (`~/.commandcode/projects/`)
   - [ ] cursor / vscode (SQLite stores)
 
 ## Verification

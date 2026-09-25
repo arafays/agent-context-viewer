@@ -2,10 +2,15 @@
  * Pi adapter — reads sessions from ~/.pi/agent/sessions/<slug>/<ts>_<uuid>.jsonl
  * and reconstructs context using the vendored Pi pure functions.
  */
-import { readdirSync, statSync, existsSync, openSync, readSync, closeSync } from "node:fs"
+
 import type { Stats } from "node:fs"
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
+import { isFresh as cacheIsFresh, type MetaCache, metaCacheKey } from "../../engine/meta-cache.ts"
+import { SearchFileBuilder } from "../../engine/transcript-lines.ts"
+import { buildSessionContext, loadEntriesFromFile } from "../../vendor/pi/session-context.ts"
+import type { AgentMessage, FileEntry, SessionEntry } from "../../vendor/pi/types.ts"
 import type {
   AgentSession,
   ContentBlockView,
@@ -16,10 +21,6 @@ import type {
   UsageTotals
 } from "../types.ts"
 import { buildContextPoints, buildSessionContextInfo } from "./context.ts"
-import { loadEntriesFromFile, buildSessionContext } from "../../vendor/pi/session-context.ts"
-import { SearchFileBuilder } from "../../engine/transcript-lines.ts"
-import { metaCacheKey, isFresh as cacheIsFresh, type MetaCache } from "../../engine/meta-cache.ts"
-import type { AgentMessage, FileEntry, SessionEntry } from "../../vendor/pi/types.ts"
 
 const SESSION_HEADER_SCAN_BYTES = 64 * 1024
 
@@ -87,7 +88,7 @@ export function discoverSessions(cache?: MetaCache): SessionMeta[] {
   const metas: SessionMeta[] = []
   for (const slug of readdirSync(sessionsDir)) {
     const dir = join(sessionsDir, slug)
-    let st
+    let st: Stats
     try {
       st = statSync(dir)
     } catch {
@@ -97,7 +98,7 @@ export function discoverSessions(cache?: MetaCache): SessionMeta[] {
     for (const file of readdirSync(dir)) {
       if (!file.endsWith(".jsonl")) continue
       const path = join(dir, file)
-      let fst
+      let fst: Stats
       try {
         fst = statSync(path)
       } catch {

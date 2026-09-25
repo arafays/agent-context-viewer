@@ -26,7 +26,6 @@ with a single module.
 │             sessions ││     4,679,275 tokens · last 11d ago                  │
 │   Claude Code   —    ││   …                                                  │
 │   opencode      —    ││   home/arafays/.local/share/chezmoi  14 sessions     │
-│   Command Code  —    ││     17,152,463 tokens · last 13d ago                 │
 │   Cursor        —    ││                                                      │
 │   VS Code       —    ││   all Pi sessions  (59)                              │
 │                      ││                                                      │
@@ -166,7 +165,7 @@ SSH Keys), `AUR_USERNAME`, and `AUR_EMAIL`.
 
 Pi session files (`~/.pi/agent/sessions/<project-slug>/*.jsonl`) store every
 message and event but **not** the system prompt. `acv` reconstructs it with the
-exact same code Pi uses, vendored from `@earendil-works/pi-coding-agent@0.83.0`
+exact same code Pi uses, vendored from `@earendil-works/pi-coding-agent@0.87.1`
 (MIT, see `src/vendor/pi/NOTE.md`):
 
 - `buildSystemPrompt` — base prompt + tool snippets + guidelines + skills + cwd
@@ -246,7 +245,6 @@ registering it in `registry.ts` — the renderer is shared.
 - [x] opencode adapter — SQLite with 1548 sessions; exact per-request tokens,
   compaction tracking with history cutoff (truthful +N/−M diff)
 - [x] Fuzzy content search across all sessions (fff), with jump-to-turn
-- [ ] command-code (`~/.commandcode/projects/`)
 - [ ] Cursor / VS Code Copilot (SQLite stores)
 
 ## License

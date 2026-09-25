@@ -13,9 +13,10 @@
  * + message text), NOT from loadSession(), so opening the app never pays a
  * full-parse cost for every session.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, renameSync } from "node:fs"
+import type { Stats } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join, dirname } from "node:path"
+import { dirname, join } from "node:path"
 import { FileFinder } from "@ff-labs/fff-bun"
 import type { AgentSession, AgentTool, SessionMeta } from "../adapters/types.ts"
 import { sessionSearchLines } from "./transcript-lines.ts"
@@ -105,7 +106,7 @@ function listCacheFiles(dir: string): string[] {
   const out: string[] = []
   for (const tool of readdirSync(dir)) {
     const tdir = join(dir, tool)
-    let tst
+    let tst: Stats
     try {
       tst = statSync(tdir)
     } catch {
@@ -114,7 +115,7 @@ function listCacheFiles(dir: string): string[] {
     if (!tst.isDirectory()) continue
     for (const proj of readdirSync(tdir)) {
       const pdir = join(tdir, proj)
-      let pst
+      let pst: Stats
       try {
         pst = statSync(pdir)
       } catch {

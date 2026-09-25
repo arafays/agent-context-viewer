@@ -1,6 +1,7 @@
 /**
  * Minimal structural types for vendored Pi session/context code.
- * Mirrors the shapes from @earendil-works/pi-coding-agent 0.83.0 dist (MIT).
+ * Mirrors the shapes from @earendil-works/pi-coding-agent 0.87.1 dist (MIT),
+ * verified against `dist/core/session-manager.d.ts` and `dist/core/messages.d.ts`.
  * Types are intentionally loose where the runtime data is polymorphic.
  */
 
@@ -36,6 +37,7 @@ export interface AgentMessage {
     | "user"
     | "assistant"
     | "toolResult"
+    | "system"
     | "custom"
     | "compactionSummary"
     | "branchSummary"
@@ -85,6 +87,17 @@ export interface ModelChangeEntry extends SessionEntryBase {
   modelId: string
 }
 
+export interface UsageEntry extends SessionEntryBase {
+  type: "usage"
+  /** Arbitrary usage category, such as "cache_warm". */
+  kind: string
+  provider: string
+  model: string
+  usage: Usage
+  /** Optional human-readable qualifier for usage notices. */
+  note?: string
+}
+
 export interface CompactionEntry extends SessionEntryBase {
   type: "compaction"
   summary: string
@@ -93,30 +106,48 @@ export interface CompactionEntry extends SessionEntryBase {
   details?: unknown
   usage?: Usage
   fromHook?: boolean
+  /** Complete prompt and tool state at this compaction boundary (0.87.1+). */
+  systemMessage?: AgentMessage
 }
 
 export interface BranchSummaryEntry extends SessionEntryBase {
   type: "branch_summary"
   fromId: string
-  summary?: string
+  summary: string
+  details?: unknown
+  usage?: Usage
+  fromHook?: boolean
 }
 
 export interface CustomEntry extends SessionEntryBase {
   type: "custom"
   customType: string
-  data: unknown
+  data?: unknown
 }
 
 export interface CustomMessageEntry extends SessionEntryBase {
   type: "custom_message"
   customType: string
-  content?: ContentBlock[] | string
-  display?: boolean
+  content: ContentBlock[] | string
+  display: boolean
   details?: unknown
+}
+
+/** Content that an append-only context edit may replace without changing message metadata. */
+export type ContextEditableContent = ContentBlock[] | string
+
+/** Append-only change to one earlier entry's contribution to model context (0.87.1+). */
+export interface ContextEditEntry extends SessionEntryBase {
+  type: "context_edit"
+  targetId: string
+  /** Null omits the target from model context. A value replaces only its content. */
+  replacement: { content: ContextEditableContent } | null
 }
 
 export interface LabelEntry extends SessionEntryBase {
   type: "label"
+  targetId: string
+  label: string | undefined
 }
 
 export interface SessionInfoEntry extends SessionEntryBase {
@@ -128,14 +159,32 @@ export type SessionEntry =
   | SessionMessageEntry
   | ThinkingLevelChangeEntry
   | ModelChangeEntry
+  | UsageEntry
   | CompactionEntry
   | BranchSummaryEntry
   | CustomEntry
   | CustomMessageEntry
+  | ContextEditEntry
   | LabelEntry
   | SessionInfoEntry
 
 export type FileEntry = SessionHeader | SessionEntry
+
+/** One append-only entry's projection: its raw source plus model-visible messages. */
+export interface ProjectedSessionEntry {
+  /** Raw append-only entry that owns this projected contribution. */
+  sourceEntry: SessionEntry
+  /** Model-visible messages after context edits. Empty for state-only entries and omissions. */
+  messages: AgentMessage[]
+}
+
+/** Provenance-preserving, compaction-aware model context. */
+export interface SessionProjection {
+  entries: ProjectedSessionEntry[]
+  messages: AgentMessage[]
+  thinkingLevel: string
+  model: { provider: string; modelId: string } | null
+}
 
 export interface SessionContext {
   messages: AgentMessage[]

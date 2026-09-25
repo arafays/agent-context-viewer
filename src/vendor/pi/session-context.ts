@@ -1,15 +1,29 @@
 /**
- * Vendored from @earendil-works/pi-coding-agent 0.83.0 `dist/core/session-manager.js` (MIT).
+ * Vendored from @earendil-works/pi-coding-agent 0.87.1 `dist/core/session-manager.js` (MIT).
  * Pure functions only (no SessionManager class / I/O side effects beyond reading a file).
+ * Verified line-by-line against 0.87.1 dist (.js runtime + .d.ts types).
+ *
+ * Deliberate omission: dist `loadEntriesFromFile()` ends with an `appendFileSync`
+ * repair that rewrites a session file when its last line lacks a trailing newline.
+ * This is a read-only viewer, so the write side effect is intentionally not ported.
  * See NOTE.md in this directory.
  */
 import { randomUUID } from "node:crypto"
 import { closeSync, existsSync, openSync, readSync } from "node:fs"
-import { StringDecoder } from "node:string_decoder"
 import { join } from "node:path"
+import { StringDecoder } from "node:string_decoder"
 import { createBranchSummaryMessage, createCompactionSummaryMessage, createCustomMessage } from "./messages.ts"
 import { normalizePath, resolvePath } from "./paths.ts"
-import type { AgentMessage, FileEntry, SessionContext, SessionEntry, SessionHeader } from "./types.ts"
+import type {
+  AgentMessage,
+  CompactionEntry,
+  ContextEditEntry,
+  FileEntry,
+  SessionContext,
+  SessionEntry,
+  SessionHeader,
+  SessionProjection
+} from "./types.ts"
 
 export const CURRENT_SESSION_VERSION = 3
 
@@ -94,7 +108,7 @@ export function parseSessionEntries(content: string): FileEntry[] {
   return entries
 }
 
-export function getLatestCompactionEntry(entries: SessionEntry[]): SessionEntry | null {
+export function getLatestCompactionEntry(entries: SessionEntry[]): CompactionEntry | null {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!
     if (entry.type === "compaction") {
@@ -152,9 +166,9 @@ function getSessionContextSettings(path: SessionEntry[]): {
     } else if (entry.type === "model_change") {
       model = { provider: entry.provider, modelId: entry.modelId }
     } else if (entry.type === "message" && entry.message.role === "assistant") {
-      const provider = entry.message.provider
-      const modelId = entry.message.model
-      if (provider && modelId) model = { provider, modelId }
+      // dist assigns unconditionally (no provider/model guard); values may be
+      // undefined in hand-edited files — cast to satisfy the SessionContext type.
+      model = { provider: entry.message.provider as string, modelId: entry.message.model as string }
     }
   }
   return { thinkingLevel, model }
@@ -167,6 +181,9 @@ function getSessionContextSettings(path: SessionEntry[]): {
 export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage[] {
   if (entry.type === "message") {
     const message = entry.message
+    // Session files are parsed without validation; old versions, forks, or
+    // hand-edited files can contain messages with null/missing content.
+    if (message.role === "system" && message.content == null) return [{ ...message, content: "" }]
     if (
       (message.role === "user" || message.role === "assistant" || message.role === "toolResult") &&
       message.content == null
@@ -182,7 +199,8 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
     return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)]
   }
   if (entry.type === "compaction") {
-    return [createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp)]
+    const summary = createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp)
+    return entry.systemMessage ? [entry.systemMessage, summary] : [summary]
   }
   return []
 }
@@ -222,7 +240,7 @@ export function buildContextEntries(
     if (entry.id === compaction!.firstKeptEntryId) {
       foundFirstKept = true
     }
-    if (foundFirstKept) {
+    if (foundFirstKept && !(entry.type === "message" && entry.message.role === "system")) {
       contextEntries.push(entry)
     }
   }
@@ -235,14 +253,64 @@ export function buildContextEntries(
  * If leafId is provided, walks from that entry to root.
  * Handles compaction and branch summaries along the path.
  */
+function projectContextEntry(entry: SessionEntry, edit: ContextEditEntry | undefined): AgentMessage[] {
+  const messages = sessionEntryToContextMessages(entry)
+  if (!edit) return messages
+  const replacement = edit.replacement
+  if (replacement === null) return []
+  return messages.map((message) => {
+    if (
+      message.role !== "user" &&
+      message.role !== "assistant" &&
+      message.role !== "toolResult" &&
+      message.role !== "custom"
+    ) {
+      return message
+    }
+    const content =
+      (message.role === "assistant" || message.role === "toolResult") && typeof replacement.content === "string"
+        ? [{ type: "text", text: replacement.content }]
+        : replacement.content
+    return { ...message, content }
+  })
+}
+
+/** Build provenance-preserving, compaction-aware model context. */
+export function buildSessionProjection(
+  entries: SessionEntry[],
+  leafId?: string | null,
+  byId?: Map<string, SessionEntry>
+): SessionProjection {
+  const path = buildSessionPath(entries, leafId, byId)
+  const { thinkingLevel, model } = getSessionContextSettings(path)
+  const contextEntries = buildContextEntries(entries, leafId, byId)
+  const edits = new Map<string, ContextEditEntry>()
+  for (const entry of contextEntries) {
+    if (entry.type === "context_edit") edits.set(entry.targetId, entry)
+  }
+  const projectedEntries = contextEntries.map((sourceEntry, index) => ({
+    sourceEntry,
+    // buildContextEntries() may retain an older compaction entry because its
+    // raw ID lies inside the newest retained range. Only the newest compaction
+    // at index zero contributes a checkpoint and summary.
+    messages:
+      sourceEntry.type === "compaction" && index > 0 ? [] : projectContextEntry(sourceEntry, edits.get(sourceEntry.id))
+  }))
+  return {
+    entries: projectedEntries,
+    messages: projectedEntries.flatMap((entry) => entry.messages),
+    thinkingLevel,
+    model
+  }
+}
+
+/** Build the finalized model context from the canonical session projection. */
 export function buildSessionContext(
   entries: SessionEntry[],
   leafId?: string | null,
   byId?: Map<string, SessionEntry>
 ): SessionContext {
-  const path = buildSessionPath(entries, leafId, byId)
-  const { thinkingLevel, model } = getSessionContextSettings(path)
-  const messages = buildContextEntries(entries, leafId, byId).flatMap(sessionEntryToContextMessages)
+  const { messages, thinkingLevel, model } = buildSessionProjection(entries, leafId, byId)
   return { messages, thinkingLevel, model }
 }
 
@@ -292,9 +360,13 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
   }
   if (entries.length === 0) return entries
   const header = entries[0]!
+  // Validate session header before repairing the file.
   if (header.type !== "session" || typeof header.id !== "string") {
     return []
   }
+  // Deliberate omission vs dist: dist appends a trailing "\n" here via
+  // appendFileSync when the file's last line lacked one. This viewer never
+  // mutates session files (read-only), so that repair is not ported.
   return entries
 }
 

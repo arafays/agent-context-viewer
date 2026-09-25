@@ -10,9 +10,9 @@
  * Layout mirrors the search-file layout from search-index.ts:
  *   <cacheRoot>/meta/<tool>/<project>/<sanitizedId>.json
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, renameSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join, dirname } from "node:path"
+import { dirname, join } from "node:path"
 import type { SessionMeta } from "../adapters/types.ts"
 
 /** Bump when a SessionMeta/cache schema change invalidates old sidecars. */

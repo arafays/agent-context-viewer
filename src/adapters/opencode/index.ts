@@ -14,31 +14,34 @@
  *    step-start/step-finish (snapshot hash + tokens), patch, file, compaction.
  *    A compaction is attached to a user-role message → that message becomes a
  *    compaction summary in the LLM context.
- *  - `session_message` holds model-switched / agent-switched events.
+ *  - opencode 2.x writes `session_v2` + `session_message` instead (the legacy
+ *    `session`/`message`/`part` tables stop being updated). v2-only sessions
+ *    are normalized into the same message/parts shape here: user/assistant/
+ *    compaction rows map to messages, synthetic/shell rows to `custom`
+ *    messages, idle rows are skipped, and system/model/agent rows to events.
+ *  - `session_message` also holds model-switched / agent-switched events and
+ *    persisted `system` notices for every session.
  *
- * opencode does NOT persist the system prompt — like Pi it's built at runtime
- * from global AGENTS.md + cwd-walk AGENTS.md/CLAUDE.md, so we reconstruct it
- * with an honest note (files as of today).
+ * The system prompt is rebuilt by ./context.ts: exact from the persisted
+ * `instruction_state`/`instruction_blob` rows when present, a labeled
+ * two-block reconstruction otherwise.
  */
 import { Database } from "bun:sqlite"
 import { homedir } from "node:os"
 import { basename, join } from "node:path"
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
+import { isFresh as cacheIsFresh, type MetaCache, metaCacheKey } from "../../engine/meta-cache.ts"
+import { SearchFileBuilder } from "../../engine/transcript-lines.ts"
 import type {
   AgentSession,
   ContentBlockView,
   ContextPoint,
-  ContextFile,
   NormalizedMessage,
-  SessionContextInfo,
   SessionEventView,
   SessionMeta,
   Turn,
   UsageTotals
 } from "../types.ts"
-import { loadProjectContextFiles } from "../../vendor/pi/context-files.ts"
-import { SearchFileBuilder } from "../../engine/transcript-lines.ts"
-import { metaCacheKey, isFresh as cacheIsFresh, type MetaCache } from "../../engine/meta-cache.ts"
+import { buildOpencodeContextInfo } from "./context.ts"
 
 let db: Database | null = null
 
@@ -64,6 +67,10 @@ function openDb(): Database {
   if (db) return db
   db = new Database(join(getDataDir(), "opencode.db"), { readonly: true })
   return db
+}
+
+function tableExists(d: Database, name: string): boolean {
+  return Boolean(d.query(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(name))
 }
 
 function num(v: unknown): number {
@@ -103,15 +110,52 @@ export function discoverSessions(cache?: MetaCache): SessionMeta[] {
   // expensive parts are the three COUNT/GROUP BY queries and the message⋈part
   // join over the ~5GB DB. When every session is cache-fresh (time_updated
   // matches a sidecar), we skip all of them.
-  const rows = d
-    .query(
-      `SELECT id, slug, directory, title, model, agent, cost,
-              tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write,
-              time_created, time_updated, time_compacting, time_archived,
-              summary_additions, summary_deletions, summary_files
-       FROM session`
+  //
+  // opencode 2.x only writes `session_v2` (the legacy `session` table stops at
+  // the migration), so source rows from it when it exists and keep any legacy
+  // `session` rows it doesn't know about (orphans — none observed, but cheap).
+  const SESSION_COLS = `id, slug, directory, title, model, agent, cost,
+            tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write,
+            time_created, time_updated, time_compacting, time_archived,
+            summary_additions, summary_deletions, summary_files`
+  const hasV2 = tableExists(d, "session_v2")
+  let rows = (
+    hasV2
+      ? d
+          .query(
+            `SELECT ${SESSION_COLS} FROM session_v2
+             UNION ALL
+             SELECT ${SESSION_COLS} FROM session WHERE id NOT IN (SELECT id FROM session_v2)`
+          )
+          .all()
+      : d.query(`SELECT ${SESSION_COLS} FROM session`).all()
+  ) as Array<Record<string, unknown>>
+
+  // Legacy membership decides storage: sessions present in `session` keep the
+  // message/part read path; v2-only sessions are read from `session_message`.
+  const legacyIds = new Set<string>(
+    hasV2
+      ? (d.query(`SELECT id FROM session`).all() as Array<{ id: string }>).map((r) => r.id)
+      : rows.map((r) => String(r.id))
+  )
+
+  // Skip v2-only sessions with no `message` and no `session_message` rows —
+  // throwaway sessions opencode created but never wrote a transcript to
+  // (mostly "image auto-describe"); they would only clutter the list.
+  if (hasV2) {
+    const withSessionMessage = new Set(
+      (d.query(`SELECT DISTINCT session_id FROM session_message`).all() as Array<{ session_id: string }>).map(
+        (r) => r.session_id
+      )
     )
-    .all() as Array<Record<string, unknown>>
+    const hasMessageQ = d.query(`SELECT 1 FROM message WHERE session_id = ? LIMIT 1`)
+    rows = rows.filter((r) => {
+      const id = String(r.id)
+      if (legacyIds.has(id)) return true
+      if (withSessionMessage.has(id)) return true
+      return Boolean(hasMessageQ.get(id))
+    })
+  }
 
   const updatedOf = (r: Record<string, unknown>): number => num(r.time_updated) || num(r.time_created)
 
@@ -133,6 +177,10 @@ export function discoverSessions(cache?: MetaCache): SessionMeta[] {
   // Sessions that need re-parsing (new or changed since the sidecar).
   const missedIds = rows.map((r) => String(r.id)).filter((id) => !cachedById.has(id))
   const allCached = missedIds.length === 0
+  // Legacy sessions read counts/text from message⋈part; v2-only sessions
+  // (no legacy rows) from session_message.
+  const missedV1 = missedIds.filter((id) => legacyIds.has(id))
+  const missedV2 = missedIds.filter((id) => !legacyIds.has(id))
 
   const msgCounts = new Map<string, { total: number; users: number }>()
   const toolCounts = new Map<string, number>()
@@ -145,7 +193,7 @@ export function discoverSessions(cache?: MetaCache): SessionMeta[] {
     // `WHERE session_id = ?` uses the primary index on both message and part,
     // while `session_id IN (...)` does not help the planner — it still walks
     // every row and json_extract()s every blob.
-    const fewMisses = missedIds.length <= 64
+    const fewMisses = missedV1.length <= 64
     const msgCountQ = d.query(
       `SELECT COUNT(*) total,
               SUM(CASE WHEN json_extract(data,'$.role')='user' THEN 1 ELSE 0 END) users
@@ -158,7 +206,7 @@ export function discoverSessions(cache?: MetaCache): SessionMeta[] {
       `SELECT COUNT(*) c FROM part WHERE session_id = ? AND json_extract(data,'$.type')='compaction'`
     )
     if (fewMisses) {
-      for (const id of missedIds) {
+      for (const id of missedV1) {
         const mc = msgCountQ.get(id) as { total: number; users: number | null } | null
         if (mc) msgCounts.set(id, { total: num(mc.total), users: num(mc.users) })
         const tc = toolCountQ.get(id) as { c: number } | null
@@ -171,7 +219,7 @@ export function discoverSessions(cache?: MetaCache): SessionMeta[] {
       // session never re-scans the whole table. Fall back to per-session when
       // the batch is smaller than the table anyway.
       const missFilter = (col: string) =>
-        `WHERE ${col} IN (${missedIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
+        `WHERE ${col} IN (${missedV1.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
       for (const r of d
         .query(
           `SELECT session_id, COUNT(*) total,
@@ -203,12 +251,8 @@ export function discoverSessions(cache?: MetaCache): SessionMeta[] {
     // One SQL join over message+part; no per-message query (the DB is ~5GB).
     try {
       const sessionInfo = new Map<string, { directory: string; title: string }>()
-      for (const r of d.query(`SELECT id, directory, title FROM session`).all() as Array<{
-        id: string
-        directory?: unknown
-        title?: unknown
-      }>) {
-        sessionInfo.set(r.id, {
+      for (const r of rows) {
+        sessionInfo.set(String(r.id), {
           directory: typeof r.directory === "string" ? r.directory : "",
           title: typeof r.title === "string" ? r.title : ""
         })
@@ -260,7 +304,7 @@ export function discoverSessions(cache?: MetaCache): SessionMeta[] {
              AND json_extract(p.data,'$.type') = 'text'
            ORDER BY m.time_created, p.time_created`
         )
-        for (const id of missedIds) {
+        for (const id of missedV1) {
           const turnBySession = new Map<string, number>()
           const b = builderFor(id)
           const rowsForId = textRowsQ.all(id) as Array<{ mdata: string; pdata: string }>
@@ -285,7 +329,7 @@ export function discoverSessions(cache?: MetaCache): SessionMeta[] {
           if (s) searchTextBySession.set(id, s)
         }
       } else {
-        const missList = missedIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")
+        const missList = missedV1.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")
         const textRows = d
           .query(
             `SELECT m.session_id, m.data AS mdata, p.data AS pdata
@@ -325,6 +369,76 @@ export function discoverSessions(cache?: MetaCache): SessionMeta[] {
         for (const [sid, b] of buildersBySession) {
           const s = b.toString()
           if (s) searchTextBySession.set(sid, s)
+        }
+      }
+
+      // v2-only sessions: counts + searchable text come from `session_message`
+      // (message/part have no rows for them). One indexed scan feeds both.
+      if (missedV2.length > 0) {
+        try {
+          const idList = missedV2.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")
+          const v2Rows = d
+            .query(
+              `SELECT session_id, type, data FROM session_message
+               WHERE session_id IN (${idList})
+                 AND type IN ('user','assistant','synthetic','compaction','shell')
+               ORDER BY session_id, seq`
+            )
+            .all() as Array<{ session_id: string; type: string; data: string }>
+          const turnBySession = new Map<string, number>()
+          const buildersBySession = new Map<string, SearchFileBuilder>()
+          const totals = new Map<string, { total: number; users: number }>()
+          for (const r of v2Rows) {
+            let data: Record<string, unknown>
+            try {
+              data = JSON.parse(r.data) as Record<string, unknown>
+            } catch {
+              continue
+            }
+            const t = totals.get(r.session_id) ?? { total: 0, users: 0 }
+            t.total += 1
+            // user/synthetic/compaction rows normalize to user-role messages
+            if (r.type === "user" || r.type === "synthetic" || r.type === "compaction") t.users += 1
+            totals.set(r.session_id, t)
+            if (r.type === "compaction") {
+              compCounts.set(r.session_id, (compCounts.get(r.session_id) ?? 0) + 1)
+            }
+            // searchable text: user/synthetic prompts + assistant replies
+            // (same scope as the v1 path — tool/reasoning output excluded)
+            const texts: string[] = []
+            if (r.type === "user" || r.type === "synthetic") {
+              if (typeof data.text === "string") texts.push(data.text)
+            } else if (r.type === "assistant") {
+              const content = Array.isArray(data.content) ? data.content : []
+              for (const c of content) {
+                const item = c as { type?: unknown; text?: unknown }
+                if (item?.type === "tool") {
+                  toolCounts.set(r.session_id, (toolCounts.get(r.session_id) ?? 0) + 1)
+                } else if (item?.type === "text" && typeof item.text === "string") {
+                  texts.push(item.text)
+                }
+              }
+            }
+            for (const text of texts) {
+              if (!text.trim()) continue
+              let b = buildersBySession.get(r.session_id)
+              if (!b) {
+                b = builderFor(r.session_id)
+                buildersBySession.set(r.session_id, b)
+              }
+              const turn = turnBySession.get(r.session_id) ?? 0
+              b.emit(turn, r.type === "assistant" ? "assistant" : "user", text)
+              // only a real user message advances the turn counter
+              if (r.type === "user") turnBySession.set(r.session_id, turn + 1)
+            }
+          }
+          for (const [id, t] of totals) msgCounts.set(id, t)
+          for (const [sid, b] of buildersBySession) {
+            const s = b.toString()
+            if (s) searchTextBySession.set(sid, s)
+          }
+        } catch {
+          /* index stays empty for opencode */
         }
       }
     } catch {
@@ -393,6 +507,10 @@ interface OcToolPart {
   type: string
   tool?: string
   callID?: string
+  /** text/reasoning content (v1 part JSON + v2-derived parts) */
+  text?: string
+  /** compaction part: why the epoch re-snapshotted (v2 rows carry it) */
+  reason?: string
   state?: { status?: string; input?: unknown; output?: unknown }
 }
 
@@ -410,93 +528,17 @@ function textBlock(text: string): ContentBlockView {
   return { kind: "text", text }
 }
 
-function readSkills(configDir: string): Array<{ name: string; description: string; filePath: string }> {
-  const dir = join(configDir, "skills")
-  const out: Array<{ name: string; description: string; filePath: string }> = []
-  if (!existsSync(dir)) return out
-  let entries: string[] = []
-  try {
-    entries = readdirSync(dir)
-  } catch {
-    return out
-  }
-  for (const e of entries) {
-    const skillDir = join(dir, e)
-    let skillDirStat = skillDir
-    try {
-      // follow symlinks (e.g. browser-control -> ~/.agents/skills/browser-control)
-      if (existsSync(skillDir) && statSync(skillDir).isSymbolicLink()) {
-        skillDirStat = realpathSync(skillDir)
-      }
-    } catch {
-      /* keep */
-    }
-    const md = join(skillDirStat, "SKILL.md")
-    if (!existsSync(md)) continue
-    try {
-      const content = readFileSync(md, "utf8")
-      const name = content.match(/^name:\s*(.+)$/m)?.[1]?.trim() ?? e
-      const description = content.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? ""
-      out.push({ name, description, filePath: md })
-    } catch {
-      /* skip unreadable */
-    }
-  }
-  return out.sort((a, b) => (a.name < b.name ? -1 : 1))
-}
-
-const DEFAULT_TOOLS = ["bash", "read", "write", "edit", "grep", "glob", "list"]
-
-function buildSystemPrompt(
-  cwd: string,
-  configDir: string,
-  contextFiles: ContextFile[],
-  skills: Array<{ name: string; description: string }>,
-  tools: string[]
-): string {
-  const lines: string[] = [
-    "╔══════════════════════════════════════════════════════════════════╗",
-    "║  opencode system prompt — reconstructed at view time            ║",
-    "║  opencode does NOT persist the system prompt in its database.   ║",
-    "║  This is a best-effort reconstruction from available session    ║",
-    "║  data: inferred tools, current skills, and AGENTS.md/CLAUDE.md  ║",
-    "║  as they exist on disk today (may differ from session time).    ║",
-    "╚══════════════════════════════════════════════════════════════════╝",
-    "",
-    "---",
-    "",
-    `Working directory: ${cwd}`,
-    "",
-    "---",
-    "",
-    "## Tools",
-    ""
-  ]
-  for (const t of tools) {
-    lines.push(`- ${t}`)
-  }
-  if (skills.length > 0) {
-    lines.push("", "---", "", "## Skills", "")
-    for (const s of skills) {
-      lines.push(`- **${s.name}** — ${s.description || "(no description)"}`)
-    }
-  }
-  if (contextFiles.length > 0) {
-    lines.push("", "---", "", "## Context files (AGENTS.md / CLAUDE.md)", "")
-    for (const f of contextFiles) {
-      lines.push(`### ${f.path}`)
-      lines.push("")
-      lines.push(f.content)
-      lines.push("")
-    }
-  }
-  return lines.join("\n")
-}
-
 /** Full load of one opencode session (messages + parts + events). */
 export function loadSession(meta: SessionMeta): AgentSession {
   const d = openDb()
-  const s = d.query(`SELECT * FROM session WHERE id = ?`).get(meta.id) as Record<string, unknown> | null
+  // opencode 2.x sessions live in session_v2; the legacy `session` table stops
+  // being updated at the migration (try v2 first so in-both sessions read the
+  // row the app itself reads).
+  let s: Record<string, unknown> | null = null
+  if (tableExists(d, "session_v2")) {
+    s = d.query(`SELECT * FROM session_v2 WHERE id = ?`).get(meta.id) as Record<string, unknown> | null
+  }
+  if (!s) s = d.query(`SELECT * FROM session WHERE id = ?`).get(meta.id) as Record<string, unknown> | null
   if (!s) throw new Error(`opencode session not found: ${meta.id}`)
 
   const msgRows = d
@@ -505,33 +547,137 @@ export function loadSession(meta: SessionMeta): AgentSession {
   const partRows = d
     .query(`SELECT message_id, data FROM part WHERE session_id = ? ORDER BY time_created`)
     .all(meta.id) as Array<{ message_id: string; data: string }>
-  const evtRows = d
-    .query(`SELECT type, data FROM session_message WHERE session_id = ? ORDER BY time_created`)
+  // session_message carries events for every era and the full transcript for
+  // v2-only sessions. seq is unique per session and strictly time-ordered
+  // (verified: 0 inversions across the table).
+  const smRows = d
+    .query(`SELECT type, data FROM session_message WHERE session_id = ? ORDER BY seq`)
     .all(meta.id) as Array<{ type: string; data: string }>
 
   interface OcMsg {
     id: string
-    role: "user" | "assistant"
+    role: "user" | "assistant" | "custom"
     data: Record<string, unknown>
   }
   const messages: OcMsg[] = []
-  for (const r of msgRows) {
-    try {
-      const data = JSON.parse(r.data) as Record<string, unknown>
-      messages.push({ id: r.id, role: data.role === "user" ? "user" : "assistant", data })
-    } catch {
-      /* skip malformed */
-    }
-  }
   const partsByMsg = new Map<string, OcToolPart[]>()
-  for (const r of partRows) {
-    try {
-      const d2 = JSON.parse(r.data) as OcToolPart
-      const arr = partsByMsg.get(r.message_id) ?? []
-      arr.push(d2)
-      partsByMsg.set(r.message_id, arr)
-    } catch {
-      /* skip malformed */
+
+  if (msgRows.length > 0) {
+    // legacy storage: message + part tables (dual-written sessions also have
+    // session_message rows — those are ignored here to avoid duplicates)
+    for (const r of msgRows) {
+      try {
+        const data = JSON.parse(r.data) as Record<string, unknown>
+        messages.push({ id: r.id, role: data.role === "user" ? "user" : "assistant", data })
+      } catch {
+        /* skip malformed */
+      }
+    }
+    for (const r of partRows) {
+      try {
+        const d2 = JSON.parse(r.data) as OcToolPart
+        const arr = partsByMsg.get(r.message_id) ?? []
+        arr.push(d2)
+        partsByMsg.set(r.message_id, arr)
+      } catch {
+        /* skip malformed */
+      }
+    }
+  } else {
+    // opencode 2.x storage: one session_message row per transcript entry,
+    // normalized into the same message+parts shape the loop below expects
+    let entry = 0
+    for (const r of smRows) {
+      const entryId = `sm_${entry++}`
+      let data: Record<string, unknown>
+      try {
+        data = JSON.parse(r.data) as Record<string, unknown>
+      } catch {
+        continue
+      }
+      if (r.type === "user" || r.type === "compaction") {
+        // a compaction row replaces history exactly like a v1 compaction part
+        // attached to a user-role message
+        messages.push({ id: entryId, role: "user", data: { role: "user", time: data.time } })
+        const parts: OcToolPart[] = []
+        if (r.type === "compaction") {
+          parts.push({ type: "compaction", reason: typeof data.reason === "string" ? data.reason : undefined })
+        } else if (typeof data.text === "string" && data.text.length > 0) {
+          parts.push({ type: "text", text: data.text })
+        }
+        partsByMsg.set(entryId, parts)
+      } else if (r.type === "assistant") {
+        const model = data.model as { id?: unknown; providerID?: unknown } | undefined
+        const parts: OcToolPart[] = []
+        const content = Array.isArray(data.content) ? data.content : []
+        for (const c of content) {
+          const item = c as {
+            type?: unknown
+            text?: unknown
+            name?: unknown
+            id?: unknown
+            state?: { status?: unknown; input?: unknown; content?: unknown; error?: unknown }
+          }
+          if (item?.type === "reasoning") {
+            if (typeof item.text === "string") parts.push({ type: "reasoning", text: item.text })
+          } else if (item?.type === "text") {
+            if (typeof item.text === "string") parts.push({ type: "text", text: item.text })
+          } else if (item?.type === "tool") {
+            const st = item.state ?? {}
+            let output: unknown
+            if (Array.isArray(st.content)) {
+              output = st.content
+                .map((x) =>
+                  x && typeof x === "object" && typeof (x as { text?: unknown }).text === "string"
+                    ? (x as { text: string }).text
+                    : ""
+                )
+                .filter((t) => t.length > 0)
+                .join("\n")
+            } else if (st.error !== undefined) {
+              output = st.error
+            }
+            parts.push({
+              type: "tool",
+              tool: typeof item.name === "string" ? item.name : "tool",
+              callID: typeof item.id === "string" ? item.id : undefined,
+              state: {
+                status: typeof st.status === "string" ? st.status : undefined,
+                input: st.input,
+                output
+              }
+            })
+          }
+        }
+        messages.push({
+          id: entryId,
+          role: "assistant",
+          data: {
+            role: "assistant",
+            modelID: typeof model?.id === "string" ? model.id : undefined,
+            providerID: typeof model?.providerID === "string" ? model.providerID : undefined,
+            tokens: data.tokens,
+            finish: data.finish,
+            time: data.time
+          }
+        })
+        partsByMsg.set(entryId, parts)
+      } else if (r.type === "synthetic" || r.type === "shell") {
+        // pushed into the LLM context as custom messages; they don't start a turn
+        let text = ""
+        if (r.type === "synthetic") {
+          text = typeof data.text === "string" ? data.text : ""
+        } else {
+          const cmd = typeof data.command === "string" ? data.command : ""
+          const exit = typeof data.exit === "number" ? `exit ${data.exit}` : ""
+          const out =
+            data.output && typeof data.output === "object" ? (data.output as { output?: unknown }).output : undefined
+          text = [cmd, exit, typeof out === "string" ? out : ""].filter((t) => t.length > 0).join("\n")
+        }
+        messages.push({ id: entryId, role: "custom", data: { ...data, customType: r.type } })
+        partsByMsg.set(entryId, text ? [{ type: "text", text }] : [])
+      }
+      // idle rows are metadata only; system/model/agent rows become events below
     }
   }
 
@@ -590,15 +736,35 @@ export function loadSession(meta: SessionMeta): AgentSession {
       current = startTurn(norm, ts, i)
       if (hasCompaction) {
         const lastCall = assistantCalls[assistantCalls.length - 1]
+        const compPart = parts.find((p) => p.type === "compaction")
         current.events.push({
           kind: "compaction",
           timestamp: ts,
-          detail: `compaction (auto)`,
+          detail: `compaction (${compPart?.reason ?? "auto"})`,
           summary: "auto-compaction",
           tokensBefore: lastCall ? (lastCall.usage?.input ?? 0) + (lastCall.usage?.cacheRead ?? 0) : 0,
           entryIndex: i
         })
       }
+      continue
+    }
+
+    if (m.role === "custom") {
+      // synthetic/shell entries (v2): pushed to the LLM but they don't
+      // start a turn
+      const text = parts
+        .filter((p) => p.type === "text")
+        .map((p) => p.text ?? "")
+        .join("\n")
+        .trim()
+      const customType = typeof m.data.customType === "string" ? m.data.customType : "custom"
+      llm.push({
+        role: "custom",
+        timestamp: ts,
+        blocks: text ? [textBlock(text)] : [],
+        customType,
+        entryIndex: i
+      })
       continue
     }
 
@@ -681,25 +847,45 @@ export function loadSession(meta: SessionMeta): AgentSession {
     }
   }
 
-  // events
+  // events (session_message: model/agent switches + persisted system notices)
   const events: SessionEventView[] = []
-  for (const ev of evtRows) {
-    let data: Record<string, unknown> = {}
+  let agentChanges = 0
+  let modelChanges = 0
+  for (const ev of smRows) {
+    if (ev.type !== "model-switched" && ev.type !== "agent-switched" && ev.type !== "system") continue
+    let data: Record<string, unknown>
     try {
       data = JSON.parse(ev.data) as Record<string, unknown>
     } catch {
-      /* skip */
+      continue
     }
-    const model = parseModel(data.model)
-    const detail = model ? `${model.providerID}/${model.id}`.replace(/^\//, model.id) : String(data.model ?? "")
     const evData = data.time as { created?: number } | undefined
     const ts = num(evData?.created ?? 0)
     if (ev.type === "model-switched") {
+      modelChanges += 1
+      const model = parseModel(data.model)
+      const detail = model ? `${model.providerID}/${model.id}`.replace(/^\//, model.id) : String(data.model ?? "")
       const e: SessionEventView = { kind: "model_change", timestamp: ts, detail: `model → ${detail}` }
       events.push(e)
       attachEvent(turns, ts, e)
     } else if (ev.type === "agent-switched") {
+      agentChanges += 1
+      const detail = typeof data.agent === "string" ? data.agent : String(data.previous ?? "")
       const e: SessionEventView = { kind: "custom", timestamp: ts, detail: `agent → ${detail}` }
+      events.push(e)
+      attachEvent(turns, ts, e)
+    } else {
+      // persisted system notice (e.g. the "instructions changed" diff)
+      const text = typeof data.text === "string" ? data.text : ""
+      if (!text) continue
+      const metadata = data.metadata as { notice?: unknown } | undefined
+      const notice = metadata && typeof metadata.notice === "string" ? `[${metadata.notice}] ` : ""
+      const full = `${notice}${text}`
+      const e: SessionEventView = {
+        kind: "custom",
+        timestamp: ts,
+        detail: full.length > 200 ? `${full.slice(0, 200)}…` : full
+      }
       events.push(e)
       attachEvent(turns, ts, e)
     }
@@ -736,32 +922,28 @@ export function loadSession(meta: SessionMeta): AgentSession {
     })
   }
 
-  // context info (reconstructed)
+  // context info: exact when the session persisted instruction evidence,
+  // labeled two-block reconstruction otherwise (see ./context.ts)
   const cwd = typeof s.directory === "string" ? s.directory : meta.cwd
   const configDir = getConfigDir()
-  const contextFiles = loadProjectContextFiles({ cwd, agentDir: configDir }).map((f) => ({
-    ...f,
-    global: f.path === join(configDir, "AGENTS.md") || f.path === join(configDir, "AGENTS.MD")
-  }))
-  const skills = readSkills(configDir)
   const toolSet = new Set<string>()
   for (const m of assistantCalls) {
     for (const b of m.blocks) if (b.toolName) toolSet.add(b.toolName)
   }
   for (const t of turns) for (const tr of t.toolResults) if (tr.toolName) toolSet.add(tr.toolName)
-  const tools = toolSet.size > 0 ? [...toolSet].sort() : DEFAULT_TOOLS
-  const notes = [
-    "system prompt not persisted by opencode — reconstructed at view time",
-    "context files are AGENTS.md/CLAUDE.md as they exist today (may differ from what was loaded during the session)"
-  ]
-  const contextInfo: SessionContextInfo = {
-    systemPrompt: buildSystemPrompt(cwd, configDir, contextFiles, skills, tools),
-    contextFiles,
-    skills,
-    tools,
-    reconstructed: true,
-    notes
-  }
+  const contextInfo = buildOpencodeContextInfo({
+    db: d,
+    sessionID: meta.id,
+    cwd,
+    version: typeof s.version === "string" ? s.version : null,
+    agent: typeof s.agent === "string" ? s.agent : null,
+    model: parseModel(s.model),
+    observedTools: [...toolSet].sort(),
+    configDir,
+    startedAt: num(s.time_created),
+    agentChanges,
+    modelChanges
+  })
 
   const session: AgentSession = {
     meta,

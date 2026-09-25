@@ -56,7 +56,7 @@ src/
     overlay.ts          # overlayOpen flag — gates keys while a modal is up
     theme.ts            # Palette from real ANSI colors (WCAG checked), light/dark aware
     util.ts
-  vendor/pi/            # Vendored Pi 0.83.0 pure functions (MIT) — do NOT edit by hand
+  vendor/pi/            # Vendored Pi 0.87.1 pure functions (MIT) — do NOT edit by hand
     NOTE.md             # Attribution, file-to-source mapping
 ```
 
@@ -90,7 +90,7 @@ src/
 
 ## Vendored Pi code
 
-`src/vendor/pi/` is MIT-licensed code from `@earendil-works/pi-coding-agent` 0.83.0.
+`src/vendor/pi/` is MIT-licensed code from `@earendil-works/pi-coding-agent` 0.87.1.
 Do NOT edit these files by hand. If a re-sync is needed, see `src/vendor/pi/NOTE.md`.
 The extractor script `scripts/extract-tool-snippets.ts` regenerates `src/vendor/pi/tool-snippets.ts`.
 

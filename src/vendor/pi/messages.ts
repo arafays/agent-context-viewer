@@ -1,5 +1,6 @@
 /**
- * Vendored from @earendil-works/pi-coding-agent 0.83.0 `dist/core/messages.js` (MIT).
+ * Vendored from @earendil-works/pi-coding-agent 0.87.1 `dist/core/messages.js` (MIT).
+ * Verified line-by-line against 0.87.1 dist (.js runtime + .d.ts types).
  * See NOTE.md in this directory.
  */
 import type { AgentMessage, ContentBlock } from "./types.ts"
@@ -83,7 +84,7 @@ export function createCustomMessage(
  * Used to render the exact text a model saw for each context message.
  */
 export function convertToLlm(messages: AgentMessage[]): Array<{
-  role: "user" | "assistant" | "toolResult"
+  role: "system" | "user" | "assistant" | "toolResult"
   content: ContentBlock[]
   timestamp?: number
 }> {
@@ -91,6 +92,7 @@ export function convertToLlm(messages: AgentMessage[]): Array<{
     .map((m) => {
       switch (m.role) {
         case "bashExecution":
+          // Skip messages excluded from context (!! prefix)
           if (m.excludeFromContext) return undefined
           return {
             role: "user" as const,
@@ -98,7 +100,11 @@ export function convertToLlm(messages: AgentMessage[]): Array<{
             timestamp: m.timestamp as number
           }
         case "custom": {
-          const content = typeof m.content === "string" ? [{ type: "text", text: m.content }] : (m.content ?? [])
+          // dist passes content through untouched (its type forbids null); our
+          // loose AgentMessage.content allows null, so cast instead of adding a
+          // `?? []` fallback that would diverge from dist behavior.
+          const content =
+            typeof m.content === "string" ? [{ type: "text", text: m.content }] : (m.content as ContentBlock[])
           return {
             role: "user" as const,
             content,
@@ -117,6 +123,7 @@ export function convertToLlm(messages: AgentMessage[]): Array<{
             content: [{ type: "text", text: COMPACTION_SUMMARY_PREFIX + m.summary + COMPACTION_SUMMARY_SUFFIX }],
             timestamp: m.timestamp as number
           }
+        case "system":
         case "user":
         case "assistant":
         case "toolResult":

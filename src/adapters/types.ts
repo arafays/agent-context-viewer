@@ -3,7 +3,7 @@
  * Each adapter maps its tool's raw storage into these types.
  */
 
-export type AgentTool = "pi" | "opencode" | "claude" | "codex" | "cmd" | "cursor" | "vscode"
+export type AgentTool = "pi" | "opencode" | "claude" | "codex" | "cursor" | "vscode"
 
 export interface ToolInfo {
   id: AgentTool

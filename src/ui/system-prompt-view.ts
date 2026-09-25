@@ -10,7 +10,13 @@ export function createSystemPromptView(session: AgentSession): ScreenInstance {
 
   const lines: string[] = []
   lines.push(
-    `SYSTEM PROMPT (${info.reconstructed ? "reconstructed — AGENTS.md/CLAUDE.md as of today" : "exact — stored inline in the session"})`
+    `SYSTEM PROMPT (${
+      info.reconstructed
+        ? info.notes.length
+          ? "reconstructed — see notes for per-section provenance"
+          : "reconstructed from current files"
+        : "exact — stored inline in the session"
+    })`
   )
   lines.push(`tools: ${info.tools.join(", ")}`)
   lines.push(`context files: ${info.contextFiles.map((f) => f.path).join(" | ") || "(none)"}`)

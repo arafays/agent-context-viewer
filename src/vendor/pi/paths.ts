@@ -1,16 +1,35 @@
 /**
- * Vendored from @earendil-works/pi-coding-agent 0.83.0 `dist/utils/paths.js` (MIT).
- * Only the helpers used by the vendored session/context code. See NOTE.md.
+ * Vendored from @earendil-works/pi-coding-agent 0.87.1 `dist/utils/paths.js` (MIT).
+ * Only the helpers used by the vendored session/context code; verified line-by-line
+ * against 0.87.1 dist (.js runtime + .d.ts types). See NOTE.md.
+ * Not ported (unused by vendored code): getFileRevision, isLocalPath,
+ * getCwdRelativePath, formatPathRelativeToCwdOrAbsolute, markPathIgnoredByCloudSync.
  */
 import { realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join, resolve as nodeResolvePath } from "node:path"
 import { fileURLToPath } from "node:url"
 
+const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g
+
+export interface PathInputOptions {
+  /** Trim leading/trailing whitespace before normalization. */
+  trim?: boolean
+  /** Expand leading `~` to a home directory. Defaults to true. */
+  expandTilde?: boolean
+  /** Home directory used for `~` expansion. Defaults to `os.homedir()`. */
+  homeDir?: string
+  /** Strip a leading `@`, used for CLI @file paths. */
+  stripAtPrefix?: boolean
+  /** Normalize unicode space variants to regular spaces. */
+  normalizeUnicodeSpaces?: boolean
+}
+
 /**
  * Resolve a path to its canonical (real) form, following symlinks.
  * Falls back to the raw path if resolution fails (e.g. the target does
- * not exist yet).
+ * not exist yet), so that callers never crash on missing filesystem
+ * entries.
  */
 export function canonicalizePath(path: string): string {
   try {
@@ -20,10 +39,30 @@ export function canonicalizePath(path: string): string {
   }
 }
 
-export function normalizePath(input: string, options: { trim?: boolean; expandTilde?: boolean } = {}): string {
+/** Convert Git Bash, MSYS, Cygwin, and WSL drive paths to a form native Windows APIs accept. */
+export function normalizeWindowsShellPath(filePath: string): string {
+  if (!filePath.startsWith("/") || filePath.startsWith("//") || filePath.includes("\\")) return filePath
+  const match = filePath.match(/^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/i)
+  if (!match) return filePath
+  const drive = match[1]
+  if (drive === undefined) return filePath
+  const suffix = match[2]?.replaceAll("/", "\\")
+  return `${drive.toUpperCase()}:\\${suffix ?? ""}`
+}
+
+export function normalizePath(input: string, options: PathInputOptions = {}): string {
   let normalized = options.trim ? input.trim() : input
+  if (options.normalizeUnicodeSpaces) {
+    normalized = normalized.replace(UNICODE_SPACES, " ")
+  }
+  if (options.stripAtPrefix && normalized.startsWith("@")) {
+    normalized = normalized.slice(1)
+  }
+  if (process.platform === "win32") {
+    normalized = normalizeWindowsShellPath(normalized)
+  }
   if (options.expandTilde ?? true) {
-    const home = homedir()
+    const home = options.homeDir ?? homedir()
     if (normalized === "~") return home
     if (normalized.startsWith("~/") || (process.platform === "win32" && normalized.startsWith("~\\"))) {
       return join(home, normalized.slice(2))
@@ -35,8 +74,8 @@ export function normalizePath(input: string, options: { trim?: boolean; expandTi
   return normalized
 }
 
-export function resolvePath(input: string, baseDir: string = process.cwd()): string {
-  const normalized = normalizePath(input)
+export function resolvePath(input: string, baseDir: string = process.cwd(), options: PathInputOptions = {}): string {
+  const normalized = normalizePath(input, options)
   const normalizedBaseDir = normalizePath(baseDir)
   return isAbsolute(normalized) ? nodeResolvePath(normalized) : nodeResolvePath(normalizedBaseDir, normalized)
 }

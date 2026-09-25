@@ -3,12 +3,13 @@
  * registered for each tool. v1 ships Pi + Codex; the rest are declared so the
  * UI can show them as "coming soon" and adapters can be added incrementally.
  */
-import type { AgentSession, AgentTool, SessionMeta, ToolInfo } from "./types.ts"
-import { discoverSessions as discoverPi, loadSession as loadPi } from "./pi/index.ts"
-import { discoverSessions as discoverCodex, loadSession as loadCodex } from "./codex/index.ts"
-import { discoverSessions as discoverClaude, loadSession as loadClaude } from "./claude/index.ts"
-import { discoverSessions as discoverOpencode, loadSession as loadOpencode } from "./opencode/index.ts"
+
 import type { MetaCache } from "../engine/meta-cache.ts"
+import { discoverSessions as discoverClaude, loadSession as loadClaude } from "./claude/index.ts"
+import { discoverSessions as discoverCodex, loadSession as loadCodex } from "./codex/index.ts"
+import { discoverSessions as discoverOpencode, loadSession as loadOpencode } from "./opencode/index.ts"
+import { discoverSessions as discoverPi, loadSession as loadPi } from "./pi/index.ts"
+import type { AgentSession, AgentTool, SessionMeta, ToolInfo } from "./types.ts"
 
 export const TOOLS: ToolInfo[] = [
   {
@@ -28,7 +29,8 @@ export const TOOLS: ToolInfo[] = [
   {
     id: "claude",
     name: "Claude Code",
-    description: "~/.claude/projects/*.jsonl — exact per-request usage; system prompt not persisted",
+    description:
+      "~/.claude/projects/*.jsonl — exact per-request usage; exact prompt when prompt_snapshot exists, else labeled fallback",
     available: true,
     storage: ["~/.claude/projects/"]
   },
@@ -38,13 +40,6 @@ export const TOOLS: ToolInfo[] = [
     description: "~/.local/share/opencode/opencode.db — exact per-request tokens; system prompt reconstructed",
     available: true,
     storage: ["~/.local/share/opencode/opencode.db"]
-  },
-  {
-    id: "cmd",
-    name: "Command Code",
-    description: "~/.commandcode/projects/ (adapter planned)",
-    available: false,
-    storage: ["~/.commandcode/projects/"]
   },
   {
     id: "cursor",

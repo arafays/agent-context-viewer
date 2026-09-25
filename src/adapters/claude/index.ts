@@ -8,18 +8,22 @@
  *     with tool_result blocks)
  *   - mode entries → plan/code mode changes, ai-title → session name
  *
- * The Claude Code system prompt is NOT persisted in session files (only
- * `turn_duration` system entries exist), so systemPrompt is empty and context
- * files are reconstructed from the cwd's CLAUDE.md/AGENTS.md hierarchy
- * (labeled reconstructed — may differ from the session date).
+ * Prompt context (see ./context.ts): newer sessions record the EXACT system
+ * prompt in `prompt_snapshot` attachments (text blocks + cliPrefix + tool
+ * list), plus exact `instructions` (CLAUDE.md/AGENTS.md contents),
+ * `skill_listing`, and `agent_listing_delta` attachments. Older sessions have
+ * none of these — the proprietary base prompt is then NOT reconstructed;
+ * only recoverable context (context-file hierarchy, skills/agents/commands on
+ * disk) is composed, each section labeled with its source in `notes`.
  */
-import { readdirSync, statSync, existsSync, openSync, readSync, closeSync } from "node:fs"
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs"
 import { homedir } from "node:os"
-import { basename, dirname, join } from "node:path"
+import { basename, join } from "node:path"
+import { isFresh as cacheIsFresh, type MetaCache, metaCacheKey } from "../../engine/meta-cache.ts"
+import { SearchFileBuilder } from "../../engine/transcript-lines.ts"
 import type {
   AgentSession,
   ContentBlockView,
-  ContextFile,
   ContextPoint,
   NormalizedMessage,
   SessionContextInfo,
@@ -28,17 +32,26 @@ import type {
   Turn,
   UsageTotals
 } from "../types.ts"
-import { loadProjectContextFiles } from "../../vendor/pi/context-files.ts"
-import { SearchFileBuilder } from "../../engine/transcript-lines.ts"
-import { metaCacheKey, isFresh as cacheIsFresh, type MetaCache } from "../../engine/meta-cache.ts"
+import {
+  buildClaudeContextInfo,
+  captureAttachment,
+  emptyEvidence,
+  normalizeSnapshots,
+  type SessionEvidence,
+  snapshotPromptAt
+} from "./context.ts"
 
 const SCAN_BYTES = 64 * 1024
 const zeroUsage = (): UsageTotals => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 })
 
-export function getProjectsDir(): string {
+/** Claude Code config dir: CLAUDE_CONFIG_DIR → ~/.claude. */
+export function getConfigDir(): string {
   const env = process.env.CLAUDE_CONFIG_DIR
-  const root = env ? env : join(homedir(), ".claude")
-  return join(root, "projects")
+  return env ? env : join(homedir(), ".claude")
+}
+
+export function getProjectsDir(): string {
+  return join(getConfigDir(), "projects")
 }
 
 type RawLine = {
@@ -433,6 +446,7 @@ export function loadSession(path: string): AgentSession {
   const events: SessionEventView[] = []
   const turns: Turn[] = []
   const assistantCalls: NormalizedMessage[] = []
+  const evidence: SessionEvidence = emptyEvidence()
   let name: string | undefined
   let currentMode = "code"
   let cwd = ""
@@ -441,7 +455,7 @@ export function loadSession(path: string): AgentSession {
   let startedAt = st.mtime.toISOString()
   let currentModel: string | null = null
   let currentTurn: Turn | null = null
-  let currentThinking: string | null = null
+  const currentThinking: string | null = null
   /** raw assistant entries awaiting usage-grouping (Claude emits one entry per block) */
   const rawAssistants: Array<{ o: RawLine; lineNo: number; ts: number; turn: Turn }> = []
   /** line numbers of compaction entries — context points trim to messages after the last one */
@@ -575,7 +589,13 @@ export function loadSession(path: string): AgentSession {
       }
       case "attachment": {
         const turn = ensureTurn(ts)
-        turn.events.push({ kind: "custom", timestamp: ts, detail: "attachment" })
+        const att =
+          typeof o.attachment === "object" && o.attachment !== null
+            ? (o.attachment as Record<string, unknown>)
+            : undefined
+        const attType = typeof att?.type === "string" ? att.type : "attachment"
+        turn.events.push({ kind: "custom", timestamp: ts, detail: `attachment: ${attType}` })
+        captureAttachment(evidence, att, lineNo)
         break
       }
       case "system":
@@ -697,6 +717,7 @@ export function loadSession(path: string): AgentSession {
   if (startedAt === st.mtime.toISOString() && firstTs) startedAt = firstTs
 
   // ---- context points: one per assistant call, before = prior messages ----
+  const snapshots = normalizeSnapshots(evidence.promptSnapshots)
   const contextPoints: ContextPoint[] = []
   const ordered: Array<{ line: number; msg: NormalizedMessage }> = []
   const pushOrdered = (m: NormalizedMessage) => ordered.push({ line: m.entryIndex, msg: m })
@@ -729,25 +750,13 @@ export function loadSession(path: string): AgentSession {
       thinkingLevel: currentThinking,
       usage,
       contextTokens: usage.input + usage.cacheRead + usage.cacheWrite,
-      systemPrompt: "",
+      systemPrompt: snapshotPromptAt(snapshots, call.entryIndex),
       contextMessages: before
     })
   }
 
-  // context files: reconstruct from cwd (Claude Code doesn't persist them)
-  let reconstructedFiles: ContextFile[] = []
-  try {
-    if (cwd) {
-      reconstructedFiles = loadProjectContextFiles({ cwd, agentDir: join(homedir(), ".claude") }).map((f) => ({
-        path: f.path,
-        content: f.content,
-        global: f.path.includes(".claude")
-      }))
-    }
-  } catch {
-    /* ignore */
-  }
-
+  // prompt context (exact prompt_snapshot/instructions/skill/agent attachments
+  // when present, otherwise composed from disk) — see ./context.ts
   const project = cwd.split("/").filter(Boolean).pop() ?? "unknown"
   const meta: SessionMeta = {
     tool: "claude",
@@ -775,25 +784,21 @@ export function loadSession(path: string): AgentSession {
     customTypes: compactionLines.length ? [{ type: "compaction", count: compactionLines.length }] : []
   }
 
-  const contextInfo: SessionContextInfo = {
-    systemPrompt: "",
-    contextFiles: reconstructedFiles,
-    skills: [],
-    tools: [
-      ...new Set(
-        assistantCalls.flatMap((c) => c.blocks.filter((b) => b.kind === "tool_use").map((b) => b.toolName ?? ""))
-      )
-    ]
-      .filter(Boolean)
-      .sort(),
-    reconstructed: true,
-    notes: [
-      "Claude Code does not persist the system prompt in session files (only turn_duration system entries) — system prompt view unavailable",
-      "per-request context tokens + messages are exact (usage.input + cache_read_input_tokens)",
-      `context files below are reconstructed from the cwd as of today (may differ from session date)`,
-      gitBranch ? `git branch: ${gitBranch}` : ""
-    ].filter(Boolean)
-  }
+  const observedTools = [
+    ...new Set(
+      assistantCalls.flatMap((c) => c.blocks.filter((b) => b.kind === "tool_use").map((b) => b.toolName ?? ""))
+    )
+  ]
+    .filter(Boolean)
+    .sort()
+
+  const contextInfo: SessionContextInfo = buildClaudeContextInfo({
+    cwd,
+    configDir: getConfigDir(),
+    evidence,
+    observedTools,
+    gitBranch
+  })
 
   return {
     meta,
@@ -803,7 +808,7 @@ export function loadSession(path: string): AgentSession {
     contextInfo,
     contextPoints,
     name: name ?? project,
-    raw: { contextFiles: reconstructedFiles }
+    raw: { contextFiles: contextInfo.contextFiles }
   } satisfies AgentSession
 }
 

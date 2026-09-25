@@ -8,11 +8,12 @@
  *   - response_item (message/reasoning/tool calls) + event_msg token_count → per-request usage
  *   - turn_context                          → model, effort, sandbox per turn
  */
-import { readdirSync, statSync, existsSync, openSync, readSync, closeSync } from "node:fs"
+import type { Dirent } from "node:fs"
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
+import { isFresh as cacheIsFresh, type MetaCache, metaCacheKey } from "../../engine/meta-cache.ts"
 import { SearchFileBuilder } from "../../engine/transcript-lines.ts"
-import { metaCacheKey, isFresh as cacheIsFresh, type MetaCache } from "../../engine/meta-cache.ts"
 import type {
   AgentSession,
   ContextFile,
@@ -81,7 +82,7 @@ function readFirstLine(path: string): string {
 }
 
 function walkSessionFiles(dir: string, out: string[]): void {
-  let entries
+  let entries: Dirent[]
   try {
     entries = readdirSync(dir, { withFileTypes: true })
   } catch {
@@ -341,7 +342,7 @@ export function loadSession(path: string): AgentSession {
   let startedAt = st.mtime.toISOString()
   let model: string | null = null
   let currentTurn: number | null = null
-  let lastTurnId = ""
+  const lastTurnId = ""
 
   const lines = text.split("\n")
   for (let i = 0; i < lines.length; i++) {

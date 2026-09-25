@@ -20,8 +20,14 @@ for (const meta of top.slice(0, 3)) {
   console.log(`\n=== ${meta.project} ${meta.id.slice(0, 8)} "${meta.name ?? ""}" ===`);
   console.log(`  turns=${s.turns.length} assistantCalls=${s.assistantCalls.length} contextPoints=${s.contextPoints.length}`);
   console.log(`  model=${s.meta.model ?? "?"} tokens=${JSON.stringify(s.meta.tokens)}`);
-  console.log(`  systemPrompt=${s.contextInfo.systemPrompt.length} chars (unavailable) · files=${s.contextInfo.contextFiles.length}`);
-  console.log(`  tools=${s.contextInfo.tools.join(", ") || "none"}`);
+  const ci = s.contextInfo;
+  const firstPromptLine = ci.systemPrompt.split("\n", 1)[0] ?? "";
+  console.log(
+    `  systemPrompt=${ci.systemPrompt.length} chars · files=${ci.contextFiles.length} · skills=${ci.skills.length} · first line: ${firstPromptLine.slice(0, 90)}`,
+  );
+  if (!ci.systemPrompt.trim()) console.log("  !! empty system prompt");
+  console.log(`  tools=${ci.tools.join(", ") || "none"}`);
+  for (const n of ci.notes) console.log(`    note: ${n}`);
   const curve = sessionCurve(s.contextPoints, []);
   for (const b of curve.slice(0, Math.min(5, curve.length))) {
     console.log(`  req#${b.requestIndex} ctx=${formatTokens(b.contextTokens)} in=${formatTokens(b.input)} cache=${formatTokens(b.cacheRead)} out=${formatTokens(b.output)}`);

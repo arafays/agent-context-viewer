@@ -1,5 +1,5 @@
 /**
- * Vendored from @earendil-works/pi-coding-agent 0.83.0 (MIT):
+ * Vendored from @earendil-works/pi-coding-agent 0.87.1 (MIT):
  * - `dist/core/resource-loader.js` → `loadProjectContextFiles`, `loadContextFileFromDir`, `findShadowedContextFile`
  * - `dist/core/footer-data-provider.js` → `findGitPaths`
  * - `dist/utils/paths.js` → `canonicalizePath`, `resolvePath`
@@ -14,8 +14,12 @@ export interface ContextFile {
   content: string
 }
 
+function stripBom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+}
+
 function loadContextFileFromDir(dir: string): ContextFile | null {
-  const candidates = ["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]
+  const candidates = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]
   for (const filename of candidates) {
     const filePath = join(dir, filename)
     if (existsSync(filePath)) {
@@ -25,7 +29,7 @@ function loadContextFileFromDir(dir: string): ContextFile | null {
         }
         return {
           path: filePath,
-          content: readFileSync(filePath, "utf-8")
+          content: stripBom(readFileSync(filePath, "utf-8"))
         }
       } catch {
         // unreadable file → try next candidate
