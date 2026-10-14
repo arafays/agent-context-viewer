@@ -10,10 +10,16 @@
  * so only the glibc native package is embedded (Arch is glibc).
  */
 import { mkdirSync } from "node:fs"
+import pkg from "../package.json"
 
-const version = (process.env.ACV_VERSION ?? "").replace(/^v/, "") || "0.0.0"
-const target = process.env.BUN_TARGET ?? "bun-linux-x64"
+const version = (process.env.ACV_VERSION ?? "").replace(/^v/, "") || pkg.version
+const target = process.env.BUN_TARGET ?? "bun-linux-x64-baseline"
 const asset = process.env.ASSET ?? "acv-linux-x64"
+
+const targets = new Set(["bun-linux-x64", "bun-linux-x64-baseline", "bun-linux-arm64"])
+if (!targets.has(target)) throw new Error(`Unsupported release target: ${target}`)
+if (!/^acv-linux-(x64|aarch64)$/.test(asset)) throw new Error(`Invalid release asset: ${asset}`)
+if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error(`Invalid release version: ${version}`)
 
 mkdirSync("dist", { recursive: true })
 

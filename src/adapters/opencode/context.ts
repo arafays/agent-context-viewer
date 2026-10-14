@@ -1074,6 +1074,7 @@ export function buildOpencodeContextInfo(input: OpencodeContextInput): SessionCo
 
   return {
     systemPrompt,
+    systemPromptSource: "reconstructed",
     contextFiles,
     skills,
     tools,

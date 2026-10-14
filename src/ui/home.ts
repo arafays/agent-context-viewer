@@ -135,7 +135,7 @@ export function createHome(initialTool: AgentTool = "pi"): ScreenInstance {
       toolPane.add(
         new TextRenderable(ctx.renderer, {
           content: busy ? `⠋ ${truncated}` : truncated,
-          attributes: sel ? TextAttributes.BOLD : TextAttributes.DIM,
+          attributes: sel ? TextAttributes.BOLD : 0,
           fg: sel ? ctx.theme.accent : undefined
         })
       )
@@ -188,7 +188,7 @@ export function createHome(initialTool: AgentTool = "pi"): ScreenInstance {
         projPane.add(
           new TextRenderable(ctx.renderer, {
             content: truncated,
-            attributes: sel ? TextAttributes.BOLD : TextAttributes.DIM,
+            attributes: sel ? TextAttributes.BOLD : 0,
             fg: sel ? ctx.theme.accent : undefined
           })
         )
@@ -199,7 +199,7 @@ export function createHome(initialTool: AgentTool = "pi"): ScreenInstance {
         projPane.add(
           new TextRenderable(ctx.renderer, {
             content: truncated,
-            attributes: sel ? TextAttributes.BOLD : TextAttributes.DIM,
+            attributes: sel ? TextAttributes.BOLD : 0,
             fg: sel ? ctx.theme.accent : undefined
           })
         )

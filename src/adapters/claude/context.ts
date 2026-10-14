@@ -575,6 +575,7 @@ export function buildClaudeContextInfo(input: ClaudeContextInput): SessionContex
 
   return {
     systemPrompt,
+    systemPromptSource: first ? "stored" : "reconstructed",
     contextFiles,
     skills,
     tools,

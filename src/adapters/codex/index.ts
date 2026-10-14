@@ -96,30 +96,30 @@ function walkSessionFiles(dir: string, out: string[]): void {
   }
 }
 
-/** Cheap per-file counters for discovery (no full parse). */
-function countKinds(path: string): {
-  messageCount: number
-  user: number
-  assistant: number
-  toolResults: number
-} {
+/** Structured discovery counters: serialized whitespace and long payloads are valid. */
+function countKinds(text: string) {
   let messageCount = 0
   let user = 0
   let assistant = 0
   let toolResults = 0
-  try {
-    const text = readFileAll(path)
-    for (const m of text.matchAll(/"type":"response_item"/g)) {
-      messageCount++
-      const window = text.slice(m.index! - 200, m.index! + 200)
-      if (/"role":"user"/.test(window)) user++
-      else if (/"role":"assistant"/.test(window)) assistant++
-      else if (/"type":"(?:custom_)?tool_call_output"/.test(window)) toolResults++
+  let model: string | undefined
+  let thinkingLevel: string | undefined
+  for (const line of text.split("\n")) {
+    const event = parseLine(line)
+    if (!event) continue
+    const payload = event.payload ?? {}
+    if (event.type === "turn_context") {
+      if (typeof payload.model === "string") model = payload.model
+      if (typeof payload.effort === "string") thinkingLevel = payload.effort
     }
-  } catch {
-    /* ignore */
+    if (event.type !== "response_item") continue
+    messageCount++
+    if (payload.type === "message" && payload.role === "user") user++
+    else if (payload.type === "message" && payload.role === "assistant") assistant++
+    else if (["function_call_output", "custom_tool_call_output", "tool_call_output"].includes(String(payload.type)))
+      toolResults++
   }
-  return { messageCount, user, assistant, toolResults }
+  return { messageCount, user, assistant, toolResults, model, thinkingLevel }
 }
 
 function readFileAll(path: string): string {
@@ -168,7 +168,8 @@ export function discoverSessions(cache?: MetaCache): SessionMeta[] {
           continue
         }
       }
-      const counts = countKinds(path)
+      const text = readFileAll(path)
+      const counts = countKinds(text)
       const metaBase: SessionMeta = {
         tool: "codex",
         id,
@@ -179,7 +180,8 @@ export function discoverSessions(cache?: MetaCache): SessionMeta[] {
         updatedAt: st.mtime.toISOString(),
         sizeBytes: st.size,
         name: project,
-        model: undefined,
+        model: counts.model,
+        thinkingLevel: counts.thinkingLevel,
         messageCount: counts.messageCount,
         userMessages: counts.user,
         assistantMessages: counts.assistant,
@@ -188,7 +190,7 @@ export function discoverSessions(cache?: MetaCache): SessionMeta[] {
         compactionCount: 0,
         customTypes: []
       }
-      const searchText = buildSearchText(metaBase, readFileAll(path))
+      const searchText = buildSearchText(metaBase, text)
       const meta: SessionMeta = {
         ...metaBase,
         ...(searchText ? { searchText } : {})
@@ -384,8 +386,9 @@ export function loadSession(path: string): AgentSession {
             | undefined
           const u = info?.last_token_usage ?? info?.total_token_usage
           if (u) {
-            const input = num(u.input_tokens)
             const cacheRead = num(u.cached_input_tokens)
+            // Codex input_tokens includes cached_input_tokens. Normalize uncached input.
+            const input = Math.max(0, num(u.input_tokens) - cacheRead)
             requests.push({
               line: lineNo,
               usage: {
@@ -687,7 +690,7 @@ export function loadSession(path: string): AgentSession {
     sizeBytes: st.size,
     name: project,
     model: (modelPerTurn.size > 0 ? [...modelPerTurn.values()][modelPerTurn.size - 1] : model) ?? undefined,
-    thinkingLevel: undefined,
+    thinkingLevel: [...turns].reverse().find((turn) => turn.thinkingLevel)?.thinkingLevel ?? undefined,
     messageCount: items.length,
     userMessages: items.filter((i) => i.kind === "user").length,
     assistantMessages: items.filter((i) => i.kind === "assistant").length,
@@ -703,13 +706,16 @@ export function loadSession(path: string): AgentSession {
   }
 
   const notes = [
-    "system prompt stored inline (session_meta.base_instructions) — exact",
+    systemPrompt
+      ? "system prompt stored inline (session_meta.base_instructions) — exact"
+      : "system prompt not persisted in session_meta.base_instructions",
     "AGENTS.md, skills & permissions embedded as developer/user messages — exact",
     `model provider: ${modelProvider || "unknown"}${git.branch ? ` · branch ${git.branch}` : ""}`
   ]
   if (git.repo) notes.push(`repo: ${git.repo}`)
   const contextInfo: SessionContextInfo = {
     systemPrompt,
+    systemPromptSource: systemPrompt ? "stored" : "unavailable",
     contextFiles,
     skills,
     tools: [...toolNames].sort(),

@@ -65,7 +65,22 @@ export function createApp(renderer: CliRenderer): void {
   const root = new BoxRenderable(renderer, {})
   renderer.root.add(root)
 
+  const history: Array<{ screen: Screen; instance: ScreenInstance }> = []
+
+  function restore(name: Screen["name"]): boolean {
+    const index = history.findLastIndex((entry) => entry.screen.name === name)
+    if (index < 0) return false
+    const entry = history[index]
+    if (!entry) return false
+    history.splice(index)
+    screen = entry.screen
+    currentScreen = entry.instance
+    render()
+    return true
+  }
+
   function setScreen(next: Screen, instance: ScreenInstance): void {
+    history.push({ screen, instance: currentScreen })
     screen = next
     currentScreen = instance
     render()
@@ -82,6 +97,7 @@ export function createApp(renderer: CliRenderer): void {
   }
 
   function goHome(): void {
+    if (restore("home")) return
     setScreen({ name: "home" }, createHome(lastTool))
   }
 
@@ -98,10 +114,12 @@ export function createApp(renderer: CliRenderer): void {
   }
 
   function backToDetail(session: AgentSession): void {
+    if (restore("detail")) return
     setScreen({ name: "detail", meta: session.meta, session }, createSessionDetail(session, session.meta))
   }
 
   function backFromDetail(meta: SessionMeta, fromProject: string | null): void {
+    if (restore("list")) return
     setScreen({ name: "list", tool: meta.tool, project: fromProject }, createSessionList(meta.tool, fromProject))
   }
 
@@ -208,11 +226,19 @@ export function createApp(renderer: CliRenderer): void {
       borderColor: theme.accent,
       padding: 1,
       flexDirection: "column",
-      width: 54
+      width: Math.min(64, cols),
+      height: Math.min(HELP_ROWS.length + 5, h)
     })
     panel.add(new TextRenderable(renderer, { content: " Help", fg: theme.accent, attributes: TextAttributes.BOLD }))
-    const list = new BoxRenderable(renderer, { flexDirection: "column", gap: 1, padding: 2 })
-    for (const [label, k] of HELP_ROWS) {
+    const list = new BoxRenderable(renderer, { flexDirection: "column" })
+    const helpRows = HELP_ROWS.filter(([label]) => {
+      if (label === "switch tool") return screen.name === "home"
+      if (["context view", "context files", "show thinking"].includes(label)) return screen.name === "detail"
+      if (label === "system prompt") return screen.name === "detail" || screen.name === "context"
+      if (label === "toggle snapshots") return screen.name === "context"
+      return true
+    })
+    for (const [label, k] of helpRows.slice(0, Math.max(1, h - 6))) {
       const row = new BoxRenderable(renderer, { flexDirection: "row", gap: 1 })
       row.add(
         new TextRenderable(renderer, { content: k.padEnd(25), attributes: TextAttributes.BOLD, fg: theme.warning })
@@ -221,6 +247,7 @@ export function createApp(renderer: CliRenderer): void {
       list.add(row)
     }
     panel.add(list)
+    panel.add(new TextRenderable(renderer, { content: "Esc / Enter close", fg: theme.toolResult }))
     overlay.add(panel)
     return overlay
   }
@@ -308,8 +335,8 @@ export function createApp(renderer: CliRenderer): void {
   renderer.on("resize", () => render())
 
   renderer.keyInput.on("keypress", (key: KeyEvent) => {
-    // Global hard quit — Shift+Q from anywhere destroys the app.
-    if (key.name === "q" && key.shift) {
+    // Shift+Q quits except while typing in the search overlay.
+    if (key.name === "q" && key.shift && !searchOpen) {
       renderer.destroy()
       return
     }

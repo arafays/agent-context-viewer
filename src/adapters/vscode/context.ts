@@ -276,6 +276,7 @@ export function buildVscodeContextInfo(a: VscodeContextArgs): SessionContextInfo
 
   return {
     systemPrompt,
+    systemPromptSource: systemPrompt ? "fragments" : "unavailable",
     contextFiles,
     skills: [],
     tools: [...new Set(a.tools)].sort(),

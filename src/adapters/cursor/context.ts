@@ -153,6 +153,7 @@ export function buildCursorContextInfo(input: CursorContextInput): SessionContex
 
   return {
     systemPrompt: "",
+    systemPromptSource: "unavailable",
     contextFiles: [],
     skills,
     tools,

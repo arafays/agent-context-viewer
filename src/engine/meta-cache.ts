@@ -16,7 +16,7 @@ import { dirname, join } from "node:path"
 import type { SessionMeta } from "../adapters/types.ts"
 
 /** Bump when a SessionMeta/cache schema change invalidates old sidecars. */
-const CURRENT_VERSION = 1
+const CURRENT_VERSION = 2
 
 export interface CachedSession {
   /** cache schema version (CURRENT_VERSION); mismatches are treated as a miss */

@@ -5,8 +5,9 @@
  * directly into the screen container as an opaque overlay by its parent.
  */
 import { BoxRenderable } from "@opentui/core"
+import { copyText } from "./clipboard.ts"
 import { type Line, renderHeader, renderKeyHint, renderLines } from "./framework.ts"
-import type { AppCtx, ScreenInstance } from "./screen.ts"
+import type { ScreenInstance } from "./screen.ts"
 import { wordWrap } from "./util.ts"
 
 /** Payload for the focused block reader. */
@@ -27,6 +28,7 @@ export interface ReaderContent {
  */
 export function createReader(content: ReaderContent, onBack: () => void): ScreenInstance {
   let cursor = 0
+  let copyStatus = ""
 
   // 2 for the left gutter (cursor indicator), 1 to avoid touching the right edge.
   function wrappedLines(cols: number): string[] {
@@ -40,6 +42,7 @@ export function createReader(content: ReaderContent, onBack: () => void): Screen
       const cols = ctx.cols
       const rows = ctx.rows
       const lines = wrappedLines(cols)
+      cursor = Math.min(cursor, Math.max(0, lines.length - 1))
 
       const viewportRows = Math.max(1, rows - 5)
       // Pager-style: keep the cursor visible. While the cursor fits in the first
@@ -58,7 +61,7 @@ export function createReader(content: ReaderContent, onBack: () => void): Screen
 
       const header = content.lang ? `${content.title} · ${content.lang}` : content.title
       const pct = lines.length > 0 ? Math.round(((cursor + 1) / lines.length) * 100) : 0
-      const subtitle = content.subtitle ?? `${cursor + 1}/${lines.length} lines · ${pct}%`
+      const subtitle = copyStatus || content.subtitle || `${cursor + 1}/${lines.length} lines · ${pct}%`
       const maxHintWidth = Math.max(0, cols - 4)
       const hintTitle = header.length > maxHintWidth ? header.slice(0, Math.max(1, maxHintWidth - 1)) + "…" : header
 
@@ -67,7 +70,7 @@ export function createReader(content: ReaderContent, onBack: () => void): Screen
       const bodyBox = new BoxRenderable(renderer, { flexDirection: "column", flexGrow: 1, width: cols })
       const bodyLines: Line[] = visible.map((text, i) => {
         const isCursor = i === cursorRow
-        return { text: text || "", color: content.color ?? theme.fg, dim: true, bold: isCursor, cursor: isCursor }
+        return { text: text || "", color: content.color ?? theme.fg, bold: isCursor, cursor: isCursor }
       })
       renderLines(renderer, bodyBox, bodyLines)
       container.add(bodyBox)
@@ -76,6 +79,7 @@ export function createReader(content: ReaderContent, onBack: () => void): Screen
         renderer,
         container,
         [
+          ["copy", "y"],
           ["scroll", "j/k ↑↓"],
           ["page", "PgUp/PgDn"],
           ["top/bottom", "g/G / Home/End"],
@@ -91,6 +95,12 @@ export function createReader(content: ReaderContent, onBack: () => void): Screen
       const lines = wrappedLines(ctx.cols)
       const max = Math.max(0, lines.length - 1)
       const page = Math.max(1, ctx.rows - 5)
+      if (key.name === "y" && !key.ctrl && !key.meta) {
+        copyStatus = copyText(ctx.renderer, content.body)
+        ctx.rerender()
+        return
+      }
+      copyStatus = ""
       if (key.name === "down" || key.name === "j") cursor = Math.min(cursor + 1, max)
       else if (key.name === "up" || key.name === "k") cursor = Math.max(0, cursor - 1)
       else if (key.name === "pagedown" || (key.name === "d" && key.ctrl)) cursor = Math.min(cursor + page, max)

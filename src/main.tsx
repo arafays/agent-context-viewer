@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { createCliRenderer } from "@opentui/core";
 import { createApp } from "./app.ts";
 import pkg from "../package.json";
@@ -24,11 +25,21 @@ if (Bun.argv.includes("--help") || Bun.argv.includes("-h")) {
       "  -v, --version  print version and exit",
       "  -h, --help     show this help and exit",
       "",
-      "Browse AI-agent session context (Pi, Codex, Claude, opencode) in a TUI.",
-      "j/k scroll · / search · Enter open · c context · s system prompt · f files · q quit",
+      "Browse AI-agent session context (Pi, Codex, Claude, opencode, Cursor, VS Code) in a TUI.",
+      "j/k scroll · / search · Enter open · c context · s system prompt · f files · y copy in reader · q back · Q quit",
     ].join("\n"),
   );
   process.exit(0);
+}
+
+const args = Bun.argv.slice(2);
+if (args.length > 0) {
+  console.error(`Unknown option: ${args[0]}. Use acv --help for usage.`);
+  process.exit(2);
+}
+if (!process.stdin.isTTY || !process.stdout.isTTY) {
+  console.error("acv requires an interactive terminal. Use acv --help for usage.");
+  process.exit(2);
 }
 
 const renderer = await createCliRenderer({ exitOnCtrlC: false });

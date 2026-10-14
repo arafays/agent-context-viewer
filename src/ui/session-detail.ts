@@ -106,17 +106,51 @@ export function createSessionDetail(
     const body: BodyFn = (text, color, dim, turn, kind, expand) =>
       out.push({ text, color, dim, kind, turn, indent: BODY_INDENT, expand })
 
+    const details = session.meta
+    tag("session info · Enter to inspect", c.system, -1, "header", {
+      title: "Session info",
+      color: c.system,
+      body: [
+        `Agent: ${details.tool}`,
+        `Session: ${details.id}`,
+        `Name: ${session.name ?? details.name ?? "(unnamed)"}`,
+        `Directory: ${details.cwd || "(unknown)"}`,
+        `Storage: ${details.path}`,
+        `Started: ${details.startedAt}`,
+        `Updated: ${details.updatedAt}`,
+        `Model: ${details.model ?? "(unknown)"}`,
+        `Thinking: ${details.thinkingLevel ?? "(unknown)"}`,
+        `Turns: ${session.turns.length}`,
+        `Assistant calls: ${session.assistantCalls.length}`,
+        `Context snapshots: ${session.contextPoints.length}`,
+        `Compactions: ${details.compactionCount}`,
+        "",
+        "Recorded token totals (missing usage may be represented as zero):",
+        `Input: ${details.tokens.input} · Output: ${details.tokens.output}`,
+        `Cache read: ${details.tokens.cacheRead} · Cache write: ${details.tokens.cacheWrite}`,
+        "",
+        "Adapter notes:",
+        ...session.contextInfo.notes
+      ].join("\n")
+    })
+    spacer(-1)
+
     // leading system prompt — first jump target, expandable in the reader
     const sysPrompt = (session.contextInfo.systemPrompt ?? "").trim()
+    const promptSource =
+      session.contextInfo.systemPromptSource ??
+      (sysPrompt ? (session.contextInfo.reconstructed ? "reconstructed" : "stored") : "unavailable")
     if (sysPrompt) {
-      const expand = { title: "system prompt", body: sysPrompt, color: c.system }
-      tag(
-        `system prompt${session.contextInfo.reconstructed ? " · reconstructed" : ""} · ${fmt(sysPrompt.length)} chars`,
-        c.system,
-        -1,
-        "system",
-        expand
-      )
+      const promptTitle = promptSource === "fragments" ? "persisted context fragments" : "system prompt"
+      const expand = { title: promptTitle, body: sysPrompt, color: c.system }
+      tag(`${promptTitle} · ${promptSource} · ${fmt(sysPrompt.length)} chars`, c.system, -1, "system", expand)
+      spacer(-1)
+    } else {
+      tag("system prompt · unavailable", c.system, -1, "system", {
+        title: "System prompt availability",
+        body: session.contextInfo.notes.join("\n") || "No system prompt text is persisted for this session.",
+        color: c.system
+      })
       spacer(-1)
     }
 
@@ -320,14 +354,14 @@ export function createSessionDetail(
         renderer,
         container,
         [
-          ["block", "j/k"],
+          [`${anchors.length ? anchorIdx + 1 : 0}/${anchors.length} blocks`, "j/k"],
           ["half page", "Ctrl-u/d"],
           ["top/bot", "g/G"],
           ["expand", "Enter"],
           ["context", "c"],
           ["sys prompt", "s"],
           ["files", "f"],
-          ["thinking", "t"],
+          [showThinking ? "thinking on" : "thinking off", "t"],
           ["help", "?"],
           ["back", "q"],
           ["quit app", "Q"]

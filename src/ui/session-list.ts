@@ -17,7 +17,9 @@ const TOOL_NAMES: Record<string, string> = {
   pi: "Pi",
   codex: "Codex",
   claude: "Claude Code",
-  opencode: "opencode"
+  opencode: "opencode",
+  cursor: "Cursor",
+  vscode: "VS Code"
 }
 
 function toolName(tool: string): string {
@@ -29,7 +31,9 @@ export function createSessionList(tool: AgentTool, project: string | null): Scre
   const filter = createFuzzyFilter()
 
   function filtered(ctx: AppCtx): SessionMeta[] {
-    const sessions = ctx.sessionsByTool[tool] ?? []
+    const sessions = (ctx.sessionsByTool[tool] ?? []).filter(
+      (s) => !project || (s.project || s.cwd || "(root)") === project
+    )
     const index = ctx.searchIndex
     if (!filter.active || !index?.ready) return sessions
     const ids = new Set(index.search(filter.query, tool).map((h) => h.meta.id))
@@ -60,16 +64,8 @@ export function createSessionList(tool: AgentTool, project: string | null): Scre
       container.add(frow)
     }
 
-    const statsLen = 6 + 1 + 4 + 1 + 6 + 1 + 7
-    const maxCompLen = sessions.reduce(
-      (m, s) => Math.max(m, s.compactionCount > 0 ? ` ⚒${s.compactionCount}`.length : 0),
-      0
-    )
-    const minPathLen = 12
-    const longestModel = sessions.reduce((m, s) => Math.max(m, (s.model ?? "—").length), 0)
-    const modelWidth = Math.max(6, Math.min(longestModel, cols - (2 + 1 + statsLen + maxCompLen + 2 + minPathLen)))
-
-    const viewportRows = Math.max(1, rows - 7)
+    const titleWidth = Math.max(8, Math.floor((cols - 2) * 0.45))
+    const viewportRows = Math.max(1, rows - (filter.open ? 6 : 5))
     const start = windowStart(sel, sessions.length, viewportRows)
     const visible = sessions.slice(start, start + viewportRows)
 
@@ -102,48 +98,27 @@ export function createSessionList(tool: AgentTool, project: string | null): Scre
     } else {
       container.add(
         new TextRenderable(ctx.renderer, {
-          content:
-            "  " +
-            "MODEL".padEnd(modelWidth) +
-            " " +
-            "DATE".padStart(6) +
-            " " +
-            "MSGS".padStart(4) +
-            " " +
-            "IN".padStart(6) +
-            " " +
-            "CACHE".padStart(7) +
-            "  PATH",
-          fg: ctx.theme.toolResult,
-          attributes: TextAttributes.DIM
+          content: "  " + "SESSION".padEnd(titleWidth) + "  MODEL · UPDATED · TOKENS · PATH",
+          fg: ctx.theme.toolResult
         })
       )
       for (const [i, s] of visible.entries()) {
-        const absIdx = start + i
-        const isSel = absIdx === sel
-        const date = s.updatedAt.slice(0, 10).replace(/^(\d+)-(\d+)-(\d+).*$/, "$2/$3")
-        const msgs = s.messageCount
-        const inK = s.tokens.input >= 1000 ? `${(s.tokens.input / 1000).toFixed(1)}k` : String(s.tokens.input)
-        const cacheK =
-          s.tokens.cacheRead >= 1000 ? `${(s.tokens.cacheRead / 1000).toFixed(1)}k` : String(s.tokens.cacheRead)
-        const comp = s.compactionCount > 0 ? ` ⚒${s.compactionCount}` : ""
-        const prefix = isSel ? "▶ " : "  "
-        const modelRaw = truncate(s.model ?? "—", modelWidth).padEnd(modelWidth)
-        const statPart = `${date.padStart(6)} ${String(msgs).padStart(4)} ${inK.padStart(6)} ${cacheK.padStart(7)}${comp}`
-        const fixedLen = prefix.length + modelRaw.length + 1 + statPart.length + 2
-        const availForCwd = cols - fixedLen
-        let cwd = tildeHome(s.cwd || s.project || "")
-        if (cwd.length > Math.max(0, availForCwd)) {
-          cwd = "…" + cwd.slice(-Math.max(2, availForCwd - 2))
-        }
-        const full = `${prefix}${modelRaw} ${statPart}  ${cwd}`
-        const maxCol = Math.max(8, cols - 1)
-        const truncated = full.length > maxCol ? full.slice(0, maxCol - 1) + "…" : full
+        const isSel = start + i === sel
+        const title = truncate(s.name?.trim() || s.id.slice(0, 12), titleWidth).padEnd(titleWidth)
+        const tokens = s.tokens.input + s.tokens.cacheRead
+        const tokenLabel =
+          tokens >= 1_000_000
+            ? `${(tokens / 1_000_000).toFixed(1)}M`
+            : tokens >= 1000
+              ? `${(tokens / 1000).toFixed(1)}k`
+              : String(tokens)
+        const metadata = `${s.model ?? "—"} · ${s.updatedAt.slice(0, 10)} · ${tokenLabel}${s.compactionCount ? ` · ⚒${s.compactionCount}` : ""} · ${tildeHome(s.cwd || s.project)}`
+        const row = `${isSel ? "▶ " : "  "}${title}  ${metadata}`
         container.add(
           new TextRenderable(ctx.renderer, {
-            content: truncated,
-            attributes: isSel ? TextAttributes.BOLD : TextAttributes.DIM,
-            fg: isSel ? ctx.theme.accent : undefined
+            content: truncate(row, Math.max(1, cols - 1)),
+            attributes: isSel ? TextAttributes.BOLD : 0,
+            fg: isSel ? ctx.theme.accent : ctx.theme.fg
           })
         )
       }
@@ -153,7 +128,7 @@ export function createSessionList(tool: AgentTool, project: string | null): Scre
       ctx.renderer,
       container,
       [
-        ["scroll", "j/k"],
+        [`${sessions.length ? sel + 1 : 0}/${sessions.length} move`, "j/k"],
         ["search", "/"],
         ["open", "Enter"],
         ["back", "q"],

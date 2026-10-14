@@ -6,7 +6,7 @@
 pkgname=agent-context-viewer-bin
 pkgver=0.0.0
 pkgrel=1
-pkgdesc="TUI that shows how AI coding agents assemble context (Pi, Codex, Claude Code, opencode)"
+pkgdesc="TUI that shows how AI coding agents assemble context (Pi, Codex, Claude Code, opencode, Cursor, VS Code)"
 arch=('x86_64' 'aarch64')
 url="https://github.com/arafays/agent-context-viewer"
 license=('MIT')

@@ -1,10 +1,10 @@
 import type { KeyEvent, Renderable } from "@opentui/core"
 import { BoxRenderable, TextAttributes, TextRenderable } from "@opentui/core"
-import type { AgentSession } from "../adapters/types.ts"
+import type { AgentSession, NormalizedMessage } from "../adapters/types.ts"
 import { buildRequestSteps, type CompactionInfo, type RequestStep, sessionCurve } from "../engine/context-diff.ts"
 import { clamp, clampMove, clearChildren, renderHeader, renderKeyHint, windowStart } from "./framework.ts"
+import { createReader } from "./reader.ts"
 import type { AppCtx, ScreenInstance } from "./screen.ts"
-import type { Theme } from "./theme.ts"
 
 export function createContextView(session: AgentSession): ScreenInstance {
   const compactions: CompactionInfo[] = session.turns.flatMap((t) =>
@@ -24,9 +24,24 @@ export function createContextView(session: AgentSession): ScreenInstance {
 
   let reqSel = 0
   let showSnapshots = true
+  let snapshotSel = 0
+  let focus: "requests" | "snapshot" = "requests"
+  let reader: ScreenInstance | null = null
+
+  function snapshotMessages(step: RequestStep | undefined): Array<{ message: NormalizedMessage; status: string }> {
+    if (!step) return []
+    return [
+      ...step.point.contextMessages.map((message) => ({ message, status: step.added.includes(message) ? "+" : " " })),
+      ...step.pruned.map((message) => ({ message, status: "−" }))
+    ]
+  }
 
   function render(container: Renderable, ctx: AppCtx): void {
     clearChildren(container)
+    if (reader) {
+      reader.render(container, ctx)
+      return
+    }
     const cols = ctx.cols
     const rows = ctx.rows
     reqSel = clamp(reqSel, steps.length)
@@ -55,6 +70,8 @@ export function createContextView(session: AgentSession): ScreenInstance {
 
     const step = steps[reqSel]
     const detailLines = detailLinesFor(step)
+    const messages = snapshotMessages(step)
+    snapshotSel = clamp(snapshotSel, messages.length)
 
     const body = new BoxRenderable(ctx.renderer, { flexDirection: "column", width: cols, flexGrow: 1 })
     container.add(body)
@@ -68,7 +85,7 @@ export function createContextView(session: AgentSession): ScreenInstance {
     )
 
     const detailHeight = detailLines.length + 4
-    const listBudget = Math.max(1, rows - 2 - 1 - 1 - detailHeight)
+    const listBudget = Math.max(1, rows - 2 - 1 - 1 - detailHeight - (showSnapshots ? 1 : 0))
     const curveRows = showSnapshots ? Math.max(1, Math.floor(listBudget / 2)) : listBudget
     const curveStart = windowStart(reqSel, curveLines.length, curveRows)
     for (const c of curveLines.slice(curveStart, curveStart + curveRows)) {
@@ -103,14 +120,23 @@ export function createContextView(session: AgentSession): ScreenInstance {
 
     if (showSnapshots) {
       const snapshotRows = Math.max(1, listBudget - curveRows)
-      const snapLines = snapshotLinesFor(step, ctx.theme)
-      for (const m of snapLines.slice(0, snapshotRows)) {
-        const truncated = m.text.length > maxLineWidth ? m.text.slice(0, maxLineWidth - 1) + "…" : m.text
+      body.add(
+        new TextRenderable(ctx.renderer, {
+          content: `SNAPSHOT ${messages.length ? snapshotSel + 1 : 0}/${messages.length} · + added / − pruned${focus === "snapshot" ? " · focused" : " · Tab to focus"}`,
+          fg: focus === "snapshot" ? ctx.theme.accent : ctx.theme.toolResult,
+          attributes: TextAttributes.BOLD
+        })
+      )
+      const start = windowStart(snapshotSel, messages.length, snapshotRows)
+      for (const [i, item] of messages.slice(start, start + snapshotRows).entries()) {
+        const selected = focus === "snapshot" && start + i === snapshotSel
+        const text = messageBody(item.message).replace(/\s+/g, " ").trim()
+        const raw = `${selected ? "▶" : " "} ${item.status} ${item.message.role}: ${text || "(empty)"}`
         body.add(
           new TextRenderable(ctx.renderer, {
-            content: truncated,
-            fg: m.color,
-            attributes: m.dim ? TextAttributes.DIM : TextAttributes.BOLD
+            content: raw.length > maxLineWidth ? raw.slice(0, maxLineWidth - 1) + "…" : raw,
+            fg: item.status === "−" ? ctx.theme.warning : item.status === "+" ? ctx.theme.user : ctx.theme.fg,
+            attributes: selected ? TextAttributes.BOLD : 0
           })
         )
       }
@@ -124,7 +150,9 @@ export function createContextView(session: AgentSession): ScreenInstance {
       ctx.renderer,
       container,
       [
-        ["request", "j/k"],
+        [focus === "snapshot" ? "message" : "request", "j/k"],
+        ["focus", "Tab"],
+        ["expand", "Enter"],
         ["snapshots", "d"],
         ["scroll req", "PgUp/PgDn"],
         ["system pr", "s"],
@@ -137,6 +165,41 @@ export function createContextView(session: AgentSession): ScreenInstance {
   }
 
   function handleKey(key: KeyEvent, ctx: AppCtx): void {
+    if (reader) {
+      reader.handleKey(key, ctx)
+      return
+    }
+    if (key.name === "tab" && showSnapshots) {
+      focus = focus === "requests" ? "snapshot" : "requests"
+      ctx.rerender()
+      return
+    }
+    if ((key.name === "return" || key.name === "enter") && showSnapshots) {
+      const item = snapshotMessages(steps[reqSel])[snapshotSel]
+      if (item)
+        reader = createReader({ title: `${item.status} ${item.message.role}`, body: messageBody(item.message) }, () => {
+          reader = null
+          ctx.rerender()
+        })
+      ctx.rerender()
+      return
+    }
+    if (focus === "snapshot" && showSnapshots) {
+      const count = snapshotMessages(steps[reqSel]).length
+      let delta: number | undefined
+      if (key.name === "j" || key.name === "down") delta = 1
+      else if (key.name === "k" || key.name === "up") delta = -1
+      else if (key.name === "pagedown") delta = Math.max(1, Math.floor(ctx.rows / 2))
+      else if (key.name === "pageup") delta = -Math.max(1, Math.floor(ctx.rows / 2))
+      else if (key.name === "home") delta = -count
+      else if (key.name === "end") delta = count
+      if (delta !== undefined) {
+        snapshotSel = clampMove(snapshotSel, delta, count)
+        ctx.rerender()
+        return
+      }
+    }
+    const previousRequest = reqSel
     if (key.name === "down" || key.name === "j") reqSel = clampMove(reqSel, 1, steps.length)
     else if (key.name === "up" || key.name === "k") reqSel = clampMove(reqSel, -1, steps.length)
     else if (key.name === "pagedown") reqSel = clampMove(reqSel, 10, steps.length)
@@ -146,11 +209,14 @@ export function createContextView(session: AgentSession): ScreenInstance {
     else if (key.name === "s") {
       ctx.openSysprompt(session)
       return
-    } else if (key.name === "d") showSnapshots = !showSnapshots
-    else if ((key.name === "q" || key.name === "escape") && !key.ctrl && !key.shift) {
+    } else if (key.name === "d") {
+      showSnapshots = !showSnapshots
+      focus = "requests"
+    } else if ((key.name === "q" || key.name === "escape") && !key.ctrl && !key.shift) {
       ctx.backToDetail(session)
       return
     } else return
+    if (previousRequest !== reqSel) snapshotSel = 0
     ctx.rerender()
   }
 
@@ -173,38 +239,11 @@ function detailLinesFor(step: RequestStep | undefined): string[] {
   return lines
 }
 
-function snapshotLinesFor(
-  step: RequestStep | undefined,
-  theme: Theme
-): Array<{ text: string; color: string; dim: boolean }> {
-  if (!step) return []
-  const out: Array<{ text: string; color: string; dim: boolean }> = []
-  for (const m of step.point.contextMessages) {
-    const text = m.blocks
-      .filter((b) => b.kind === "text" || b.kind === "thinking")
-      .map((b) => b.text ?? "")
-      .join("\n")
-      .trim()
-      .replace(/\s+/g, " ")
-      .slice(0, 180)
-    if (m.role === "compactionSummary" || m.role === "branchSummary") {
-      out.push({ text: `╒ summary: ${String(m.summary ?? "").slice(0, 180)}`, color: theme.warning, dim: false })
-    } else if (m.role === "custom") {
-      out.push({ text: `◈ custom ${m.customType ?? ""}`, color: theme.toolResult, dim: true })
-    } else if (m.role === "toolResult") {
-      out.push({
-        text: `↩ ${m.toolName ?? "tool"}${m.isError ? " (error)" : ""}: ${text.slice(0, 140)}`,
-        color: theme.toolResult,
-        dim: true
-      })
-    } else if (m.role === "developer") {
-      out.push({ text: `sys: ${text.slice(0, 140) || "(empty)"}`, color: theme.toolResult, dim: true })
-    } else {
-      const added = step.added.includes(m)
-      out.push({ text: `${m.role}: ${text || "(empty)"}`, color: added ? theme.user : theme.fg, dim: !added })
-    }
-  }
-  return out
+function messageBody(message: NormalizedMessage): string {
+  if (message.summary) return String(message.summary)
+  return message.blocks
+    .map((block) => block.text ?? (block.input === undefined ? "" : JSON.stringify(block.input, null, 2)))
+    .join("\n")
 }
 
 function fmt(n: number): string {

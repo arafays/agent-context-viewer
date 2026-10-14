@@ -145,6 +145,7 @@ export function buildSessionContextInfo(
 
   return {
     systemPrompt,
+    systemPromptSource: "reconstructed",
     contextFiles: viewFiles,
     skills: skills.map((s) => ({ name: s.name, description: s.description, filePath: s.filePath })),
     tools,

@@ -144,6 +144,8 @@ export interface ContextFile {
 
 export interface SessionContextInfo {
   systemPrompt: string
+  /** Provenance of prompt text, independent of context-file reconstruction. */
+  systemPromptSource?: "stored" | "reconstructed" | "fragments" | "unavailable"
   contextFiles: ContextFile[]
   skills: Array<{ name: string; description: string; filePath: string }>
   tools: string[]

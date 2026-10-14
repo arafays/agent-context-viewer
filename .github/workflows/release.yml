@@ -1,9 +1,9 @@
 name: release
 
-# Cut a release by pushing a tag:  git tag v0.1.0 && git push origin v0.1.0
+# Cut a release by pushing a tag:  git tag v0.2.0 && git push origin v0.2.0
 #
 # Jobs:
-#   1. build   — compile standalone OpenTUI/Bun binaries for linux-x64 + linux-aarch64
+#   1. build   — validate and compile standalone binaries on native Linux runners
 #   2. publish — attach the binaries + SHA256SUMS to a GitHub Release
 #   3. aur     — regenerate aur/agent-context-viewer-bin/PKGBUILD with the new
 #                version + checksums and push it to the AUR via
@@ -20,35 +20,44 @@ permissions:
 jobs:
   build:
     name: build ${{ matrix.asset }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: bun-linux-x64
+          - target: bun-linux-x64-baseline
             asset: acv-linux-x64
+            runner: ubuntu-24.04
           - target: bun-linux-arm64
             asset: acv-linux-aarch64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+      - uses: jdx/mise-action@v4
 
-      # OpenTUI ships os/cpu-gated native packages; installing all variants lets
-      # one x64 runner cross-compile the aarch64 binary (see OpenTUI docs,
-      # standalone-executables). bun.lock already records all variants.
-      - name: Install dependencies (all platform variants)
-        run: bun install --frozen-lockfile --os="*" --cpu="*"
+      - name: Install dependencies
+        run: aube install --frozen-lockfile
+
+      - name: Validate source
+        run: |
+          aube run typecheck
+          aube run format:check
+          aube run verify:codex
+          aube run verify:ui
 
       - name: Resolve version
         id: ver
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            PACKAGE_VERSION=$(bun -p "require('./package.json').version")
+            test "$TAG_VERSION" = "$PACKAGE_VERSION" || { echo "Tag version does not match package.json"; exit 1; }
           else
-            echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+            echo "version=$(bun -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Compile standalone binary
@@ -56,14 +65,12 @@ jobs:
           ACV_VERSION: ${{ steps.ver.outputs.version }}
           BUN_TARGET: ${{ matrix.target }}
           ASSET: ${{ matrix.asset }}
-        run: bun run build:release
+        run: aube run build:release
 
-      # Cross-compiled aarch64 can't run on the x64 runner; smoke the native one.
-      - name: Smoke test (native target only)
-        if: matrix.target == 'bun-linux-x64'
-        run: |
-          ./dist/acv-linux-x64 --version
-          ./dist/acv-linux-x64 --help >/dev/null
+      - name: Smoke test standalone binary
+        env:
+          ASSET: ${{ matrix.asset }}
+        run: aube run verify:release
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -75,6 +82,7 @@ jobs:
   publish:
     name: Publish GitHub release
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -95,6 +103,14 @@ jobs:
           fail_on_unmatched_files: true
           generate_release_notes: true
           body: |
+            ## Changes
+
+            - Six agent integrations: Pi, Codex, Claude Code, opencode, Cursor, and VS Code.
+            - Prompt provenance distinguishes stored prompts, reconstruction, saved fragments, and unavailable content.
+            - Expandable session metadata and corrected Codex model, thinking-level, and cached-token reporting.
+            - Press `y` to copy system prompts or expanded commands and messages to the terminal clipboard.
+            - OpenTUI Core UI with verified navigation, readers, and search behavior.
+
             ## Install
 
             **Arch Linux (AUR):**

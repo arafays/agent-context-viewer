@@ -1,6 +1,7 @@
 import type { KeyEvent, Renderable } from "@opentui/core"
-import { BoxRenderable, TextAttributes, TextRenderable } from "@opentui/core"
+import { BoxRenderable, TextRenderable } from "@opentui/core"
 import type { AgentSession } from "../adapters/types.ts"
+import { copyText } from "./clipboard.ts"
 import { clearChildren, renderHeader, renderKeyHint } from "./framework.ts"
 import type { AppCtx, ScreenInstance } from "./screen.ts"
 import { wordWrap } from "./util.ts"
@@ -8,23 +9,33 @@ import { wordWrap } from "./util.ts"
 export function createSystemPromptView(session: AgentSession): ScreenInstance {
   const info = session.contextInfo
 
-  const lines: string[] = []
-  lines.push(
-    `SYSTEM PROMPT (${
-      info.reconstructed
-        ? info.notes.length
-          ? "reconstructed — see notes for per-section provenance"
-          : "reconstructed from current files"
-        : "exact — stored inline in the session"
-    })`
-  )
-  lines.push(`tools: ${info.tools.join(", ")}`)
+  const source =
+    info.systemPromptSource ?? (info.systemPrompt ? (info.reconstructed ? "reconstructed" : "stored") : "unavailable")
+  const labels = {
+    stored: "exact — stored in the session",
+    reconstructed: "reconstructed — see notes for per-section provenance",
+    fragments: "persisted context fragments — full system prompt unavailable",
+    unavailable: "unavailable — not persisted by this agent"
+  }
+  const meta = session.meta
+  const lines: string[] = [
+    `SYSTEM PROMPT (${labels[source]})`,
+    `agent: ${meta.tool} · session: ${meta.id}`,
+    `name: ${session.name ?? meta.name ?? "(unnamed)"}`,
+    `directory: ${meta.cwd || "(unknown)"}`,
+    `source: ${meta.path}`,
+    `started: ${meta.startedAt} · updated: ${meta.updatedAt}`,
+    `model: ${meta.model ?? "(unknown)"} · thinking: ${meta.thinkingLevel ?? "(unknown)"}`,
+    `turns: ${session.turns.length} · requests: ${session.contextPoints.length} · compactions: ${meta.compactionCount}`
+  ]
+  lines.push(`tools: ${info.tools.join(", ") || "(none)"}`)
   lines.push(`context files: ${info.contextFiles.map((f) => f.path).join(" | ") || "(none)"}`)
   lines.push(`skills: ${info.skills.map((s) => s.name).join(", ") || "(none)"}`)
   if (info.notes.length) lines.push(`notes: ${info.notes.join("; ")}`)
   lines.push("")
-  lines.push(...info.systemPrompt.split("\n"))
+  lines.push(...(info.systemPrompt || "No system prompt text is available for this session.").split("\n"))
 
+  let copyStatus = ""
   let scroll = 0
   let wrapped: string[] = []
   let maxScroll = 0
@@ -38,7 +49,7 @@ export function createSystemPromptView(session: AgentSession): ScreenInstance {
       ctx.renderer,
       container,
       "System prompt",
-      `${session.meta.id.slice(0, 8)}  ${info.reconstructed ? "reconstructed" : "exact"} · ${lines.length} lines`,
+      copyStatus || `${session.meta.id.slice(0, 8)} · ${source}`,
       ctx.theme,
       cols
     )
@@ -52,7 +63,7 @@ export function createSystemPromptView(session: AgentSession): ScreenInstance {
 
     const body = new BoxRenderable(ctx.renderer, { flexDirection: "column", flexGrow: 1, width: cols, paddingLeft: 1 })
     for (const l of visible) {
-      body.add(new TextRenderable(ctx.renderer, { content: l || " ", attributes: TextAttributes.DIM }))
+      body.add(new TextRenderable(ctx.renderer, { content: l || " ", fg: ctx.theme.fg }))
     }
     container.add(body)
 
@@ -60,7 +71,9 @@ export function createSystemPromptView(session: AgentSession): ScreenInstance {
       ctx.renderer,
       container,
       [
-        ["scroll", "j/k"],
+        ["copy prompt", "y"],
+        [`${Math.min(scroll, maxScroll) + 1}/${wrapped.length} lines`, "j/k"],
+        ["page", "PgUp/PgDn"],
         ["back", "q"],
         ["quit app", "Q"]
       ],
@@ -70,6 +83,12 @@ export function createSystemPromptView(session: AgentSession): ScreenInstance {
   }
 
   function handleKey(key: KeyEvent, ctx: AppCtx): void {
+    if (key.name === "y" && !key.ctrl && !key.meta) {
+      copyStatus = copyText(ctx.renderer, info.systemPrompt)
+      ctx.rerender()
+      return
+    }
+    copyStatus = ""
     if (key.name === "down" || key.name === "j") scroll = Math.min(scroll + 1, maxScroll)
     else if (key.name === "up" || key.name === "k") scroll = Math.max(0, scroll - 1)
     else if (key.name === "pagedown") scroll = Math.min(scroll + 10, maxScroll)

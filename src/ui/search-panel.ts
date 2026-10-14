@@ -102,9 +102,9 @@ export function createSearchPanel(): ScreenInstance {
       ctx.renderer,
       container,
       [
-        ["select", "j/k"],
+        ["select", "↑/↓"],
         ["open (jump)", "Enter"],
-        ["close", "q/Esc"]
+        ["close", "Esc"]
       ],
       ctx.theme,
       cols
@@ -116,7 +116,7 @@ export function createSearchPanel(): ScreenInstance {
     const index = ctx.searchIndex
     const hits = computeHits(index)
 
-    if (key.name === "escape" || (key.name === "q" && !key.shift)) {
+    if (key.name === "escape") {
       if (timer) {
         clearInterval(timer)
         timer = null
@@ -129,12 +129,12 @@ export function createSearchPanel(): ScreenInstance {
       ctx.rerender()
       return
     }
-    if (key.name === "down" || key.name === "j") {
+    if (key.name === "down") {
       sel = clampMove(sel, 1, hits.length)
       ctx.rerender()
       return
     }
-    if (key.name === "up" || key.name === "k") {
+    if (key.name === "up") {
       sel = clampMove(sel, -1, hits.length)
       ctx.rerender()
       return
@@ -173,6 +173,7 @@ export function createSearchPanel(): ScreenInstance {
     }
     if (key.sequence && key.sequence.length === 1 && key.sequence.charCodeAt(0) >= 32) {
       query = query + key.sequence
+      sel = 0
       ctx.rerender()
       return
     }

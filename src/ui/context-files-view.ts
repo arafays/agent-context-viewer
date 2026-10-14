@@ -73,7 +73,7 @@ export function createContextFilesView(session: AgentSession): ScreenInstance {
       left.add(
         new TextRenderable(ctx.renderer, {
           content: f.text,
-          attributes: f.sel ? TextAttributes.BOLD : TextAttributes.DIM,
+          attributes: f.sel ? TextAttributes.BOLD : 0,
           fg: f.sel ? ctx.theme.accent : undefined
         })
       )
@@ -89,14 +89,14 @@ export function createContextFilesView(session: AgentSession): ScreenInstance {
     })
     right.add(
       new TextRenderable(ctx.renderer, {
-        content: ` ${tildeHome(selectedFile?.path ?? "(select a file)")}`,
+        content: ` ${truncPath(tildeHome(selectedFile?.path ?? "(select a file)"), Math.max(1, contentContentWidth))}`,
         attributes: TextAttributes.BOLD,
         fg: ctx.theme.toolResult
       })
     )
     if (selectedFile) {
       for (const l of visibleContent) {
-        right.add(new TextRenderable(ctx.renderer, { content: l || " ", attributes: TextAttributes.DIM }))
+        right.add(new TextRenderable(ctx.renderer, { content: l || " ", fg: ctx.theme.fg }))
       }
     } else {
       right.add(
@@ -113,7 +113,9 @@ export function createContextFilesView(session: AgentSession): ScreenInstance {
       ctx.renderer,
       container,
       [
-        ["scroll files", "j/k"],
+        [`${files.length ? fileSel + 1 : 0}/${files.length} files`, "j/k"],
+        ["content", "PgUp/PgDn"],
+        ["top/end", "Home/End"],
         ["back", "q"],
         ["quit app", "Q"]
       ],
@@ -131,8 +133,9 @@ export function createContextFilesView(session: AgentSession): ScreenInstance {
       const next = clampMove(fileSel, -1, files.length)
       if (next !== fileSel) contentScroll = 0
       fileSel = next
-    } else if (key.name === "pagedown") contentScroll = contentScroll + 10
-    else if (key.name === "pageup") contentScroll = Math.max(0, contentScroll - 10)
+    } else if (key.name === "pagedown")
+      contentScroll = Math.min(Math.max(0, contentLen - 1), contentScroll + Math.max(1, ctx.rows - 8))
+    else if (key.name === "pageup") contentScroll = Math.max(0, contentScroll - Math.max(1, ctx.rows - 8))
     else if (key.name === "home") contentScroll = 0
     else if (key.name === "end") contentScroll = contentLen
     else if ((key.name === "q" || key.name === "escape") && !key.ctrl && !key.shift) {
@@ -146,6 +149,7 @@ export function createContextFilesView(session: AgentSession): ScreenInstance {
 }
 
 function truncPath(path: string, max: number): string {
+  max = Math.max(1, max)
   if (path.length <= max) return path
-  return "…" + path.slice(-(max - 1))
+  return max === 1 ? "…" : "…" + path.slice(-(max - 1))
 }
